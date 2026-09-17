@@ -1,4 +1,4 @@
-import type { Activity, Customer, Database, Investment, Message, PortalDocument } from "@/lib/types"
+import type { Activity, Customer, CustomerAccount, Database, Investment, Message, PortalDocument } from "@/lib/types"
 
 /**
  * Demo records for the prototype. All persons, accounts and documents are
@@ -480,7 +480,27 @@ const messages: Message[] = [
   { id: "m-004", customerId: "c-004", direction: "an-kunde", subject: "Unterlagen zur Legitimation", body: "Für den Abschluss der Legitimationsprüfung benötigen wir noch eine Meldebescheinigung. Vielen Dank.", sentBy: "Sandra Vogt", sentAt: "2026-09-10T16:20:00.000Z", read: false },
 ]
 
-export const seedDatabase: Database = { customers, investments, documents, activities, messages }
+/**
+ * One existing customer login. The stored hash belongs to the demo password
+ * „PTB-Demo-2026" – no password is kept in the record itself.
+ */
+const accounts: CustomerAccount[] = [
+  {
+    id: "acc-001",
+    customerId: "c-001",
+    loginEmail: "max@example.com",
+    salt: "9f2a71c4d8b30e57",
+    passwordHash: "5fbb77227ecc1d90222d0a02f49139c3f4195ee8b51d5d670081451fc8bf6faa",
+    status: "aktiv",
+    mustChangePassword: false,
+    createdBy: "Patrick Jones",
+    createdAt: "2025-09-26T10:30:00.000Z",
+    lastLoginAt: "2026-09-15T18:22:00.000Z",
+    passwordChangedAt: "2025-09-26T10:30:00.000Z",
+  },
+]
+
+export const seedDatabase: Database = { customers, investments, documents, activities, messages, accounts }
 
 export function cloneSeed(): Database {
   return JSON.parse(JSON.stringify(seedDatabase)) as Database

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 
 import { Icon } from "@/components/admin/icons"
+import { AccessCard } from "@/components/admin/access-card"
 import { InvestmentForm } from "@/components/admin/investment-form"
 import {
   Badge,
@@ -161,6 +162,8 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
               ]}
             />
           </Card>
+
+          <AccessCard customer={customer} />
 
           <Card title="Letzte Aktivitäten">
             {activities.length === 0 ? (

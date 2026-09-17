@@ -17,7 +17,8 @@ export const IDLE_TIMEOUT_MINUTES = 15
 
 export type DemoAccount = SessionUser & { hint: string; description: string }
 
-export const demoAccounts: DemoAccount[] = [
+/** Staff logins of the prototype. Customer logins live in the data store and are issued by staff. */
+export const staffAccounts: DemoAccount[] = [
   {
     name: "Patrick Jones",
     email: "admin@pickthebank.eu",
@@ -32,15 +33,10 @@ export const demoAccounts: DemoAccount[] = [
     hint: "Kunden und Anlagen bearbeiten, keine Systemeinstellungen.",
     description: "Mitarbeiterin Kundenbetreuung",
   },
-  {
-    name: "Max Mustermann",
-    email: "kunde@pickthebank.eu",
-    role: "kunde",
-    customerId: "c-001",
-    hint: "Sieht ausschließlich die eigenen Anlagen und Dokumente.",
-    description: "Kunde PTB-000001",
-  },
 ]
+
+/** Kept for compatibility with existing imports. */
+export const demoAccounts = staffAccounts
 
 export type Permission =
   | "customers.read"
@@ -49,6 +45,7 @@ export type Permission =
   | "investments.write"
   | "documents.write"
   | "messages.send"
+  | "accounts.manage"
   | "settings.manage"
   | "users.manage"
 
@@ -60,10 +57,18 @@ const rolePermissions: Record<Role, Permission[]> = {
     "investments.write",
     "documents.write",
     "messages.send",
+    "accounts.manage",
     "settings.manage",
     "users.manage",
   ],
-  mitarbeiter: ["customers.read", "customers.write", "investments.write", "documents.write", "messages.send"],
+  mitarbeiter: [
+    "customers.read",
+    "customers.write",
+    "investments.write",
+    "documents.write",
+    "messages.send",
+    "accounts.manage",
+  ],
   kunde: [],
 }
 

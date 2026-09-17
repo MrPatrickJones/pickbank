@@ -90,12 +90,33 @@ export type Message = {
   read: boolean
 }
 
+export type AccountStatus = "aktiv" | "gesperrt"
+
+/**
+ * Login of a customer. Created by staff only; the customer can sign in with it
+ * but never change any record.
+ */
+export type CustomerAccount = {
+  id: string
+  customerId: string
+  loginEmail: string
+  salt: string
+  passwordHash: string
+  status: AccountStatus
+  mustChangePassword: boolean
+  createdBy: string
+  createdAt: string
+  lastLoginAt: string | null
+  passwordChangedAt: string
+}
+
 export type Database = {
   customers: Customer[]
   investments: Investment[]
   documents: PortalDocument[]
   activities: Activity[]
   messages: Message[]
+  accounts: CustomerAccount[]
 }
 
 export type SessionUser = {

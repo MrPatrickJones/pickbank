@@ -4,10 +4,13 @@ import type React from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 
 import { cloneSeed } from "@/lib/seed"
+import { generatePassword, hashPassword, randomSalt, verifyPassword } from "@/lib/credentials"
 import { formatDate, formatEuro, formatPercent } from "@/lib/format"
 import type {
+  AccountStatus,
   Activity,
   Customer,
+  CustomerAccount,
   CustomerStatus,
   Database,
   DocumentCategory,
@@ -41,6 +44,7 @@ type DataContextValue = {
   documents: PortalDocument[]
   activities: Activity[]
   messages: Message[]
+  accounts: CustomerAccount[]
   actor: string
   setActor: (name: string) => void
   customerById: (id: string) => Customer | undefined
@@ -59,6 +63,15 @@ type DataContextValue = {
   removeDocument: (id: string) => void
   sendMessage: (customerId: string, subject: string, body: string) => void
   markMessageRead: (id: string) => void
+  accountOf: (customerId: string) => CustomerAccount | undefined
+  createAccount: (customerId: string, loginEmail: string) => Promise<string>
+  resetAccountPassword: (accountId: string) => Promise<string>
+  setAccountStatus: (accountId: string, status: AccountStatus) => void
+  changeOwnPassword: (accountId: string, currentPassword: string, newPassword: string) => Promise<boolean>
+  signInCustomer: (
+    email: string,
+    password: string,
+  ) => Promise<{ ok: true; account: CustomerAccount; customer: Customer } | { ok: false; reason: "unknown" | "locked" }>
   resetDemoData: () => void
 }
 
@@ -71,7 +84,14 @@ export type PendingFile = {
 
 const DataContext = createContext<DataContextValue | null>(null)
 
-const emptyDb: Database = { customers: [], investments: [], documents: [], activities: [], messages: [] }
+const emptyDb: Database = {
+  customers: [],
+  investments: [],
+  documents: [],
+  activities: [],
+  messages: [],
+  accounts: [],
+}
 
 let sequence = 0
 const makeId = (prefix: string) => {
@@ -123,6 +143,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [actor, setActor] = useState("Patrick Jones")
   const actorRef = useRef(actor)
   actorRef.current = actor
+  const dbRef = useRef(db)
+  dbRef.current = db
 
   useEffect(() => {
     let loaded: Database | null = null
@@ -482,6 +504,165 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }))
   }, [])
 
+  /* ---- Customer logins: created by staff, used by the customer ---- */
+
+  const createAccount = useCallback<DataContextValue["createAccount"]>(
+    async (customerId, loginEmail) => {
+      const password = generatePassword()
+      const salt = randomSalt()
+      const passwordHash = await hashPassword(password, salt)
+      const now = new Date().toISOString()
+      const email = loginEmail.trim().toLowerCase()
+
+      setDb((current) => {
+        const account: CustomerAccount = {
+          id: makeId("acc"),
+          customerId,
+          loginEmail: email,
+          salt,
+          passwordHash,
+          status: "aktiv",
+          mustChangePassword: true,
+          createdBy: actorRef.current,
+          createdAt: now,
+          lastLoginAt: null,
+          passwordChangedAt: now,
+        }
+        return {
+          ...current,
+          accounts: [...current.accounts.filter((entry) => entry.customerId !== customerId), account],
+          activities: [
+            logEntry(customerId, "Zugang angelegt", `Kundenzugang für ${email} angelegt.`, null, email),
+            ...current.activities,
+          ],
+        }
+      })
+
+      return password
+    },
+    [logEntry],
+  )
+
+  const resetAccountPassword = useCallback<DataContextValue["resetAccountPassword"]>(
+    async (accountId) => {
+      const password = generatePassword()
+      const salt = randomSalt()
+      const passwordHash = await hashPassword(password, salt)
+      const now = new Date().toISOString()
+
+      setDb((current) => {
+        const account = current.accounts.find((entry) => entry.id === accountId)
+        if (!account) return current
+        return {
+          ...current,
+          accounts: current.accounts.map((entry) =>
+            entry.id === accountId
+              ? { ...entry, salt, passwordHash, mustChangePassword: true, passwordChangedAt: now }
+              : entry,
+          ),
+          activities: [
+            logEntry(
+              account.customerId,
+              "Passwort zurückgesetzt",
+              `Neues Passwort für den Zugang ${account.loginEmail} vergeben.`,
+            ),
+            ...current.activities,
+          ],
+        }
+      })
+
+      return password
+    },
+    [logEntry],
+  )
+
+  const setAccountStatus = useCallback<DataContextValue["setAccountStatus"]>(
+    (accountId, status) => {
+      setDb((current) => {
+        const account = current.accounts.find((entry) => entry.id === accountId)
+        if (!account || account.status === status) return current
+        return {
+          ...current,
+          accounts: current.accounts.map((entry) => (entry.id === accountId ? { ...entry, status } : entry)),
+          activities: [
+            logEntry(
+              account.customerId,
+              status === "gesperrt" ? "Zugang gesperrt" : "Zugang entsperrt",
+              `Kundenzugang ${account.loginEmail} ${status === "gesperrt" ? "gesperrt" : "wieder freigegeben"}.`,
+              account.status === "aktiv" ? "Aktiv" : "Gesperrt",
+              status === "aktiv" ? "Aktiv" : "Gesperrt",
+            ),
+            ...current.activities,
+          ],
+        }
+      })
+    },
+    [logEntry],
+  )
+
+  /** The customer may change their own password – but no record. */
+  const changeOwnPassword = useCallback<DataContextValue["changeOwnPassword"]>(
+    async (accountId, currentPassword, newPassword) => {
+      const account = dbRef.current.accounts.find((entry) => entry.id === accountId)
+      if (!account) return false
+      const valid = await verifyPassword(currentPassword, account.salt, account.passwordHash)
+      if (!valid) return false
+
+      const salt = randomSalt()
+      const passwordHash = await hashPassword(newPassword, salt)
+      const now = new Date().toISOString()
+
+      setDb((current) => ({
+        ...current,
+        accounts: current.accounts.map((entry) =>
+          entry.id === accountId
+            ? { ...entry, salt, passwordHash, mustChangePassword: false, passwordChangedAt: now }
+            : entry,
+        ),
+        activities: [
+          {
+            id: makeId("a"),
+            customerId: account.customerId,
+            user: `${account.loginEmail} (Kunde)`,
+            action: "Passwort geändert",
+            description: "Der Kunde hat sein Passwort im Kundenportal geändert.",
+            timestamp: now,
+            previousValue: null,
+            newValue: null,
+          },
+          ...current.activities,
+        ],
+      }))
+
+      return true
+    },
+    [],
+  )
+
+  const signInCustomer = useCallback<DataContextValue["signInCustomer"]>(
+    async (email, password) => {
+      const account = dbRef.current.accounts.find(
+        (entry) => entry.loginEmail.toLowerCase() === email.trim().toLowerCase(),
+      )
+      if (!account) return { ok: false, reason: "unknown" }
+      const valid = await verifyPassword(password, account.salt, account.passwordHash)
+      if (!valid) return { ok: false, reason: "unknown" }
+      if (account.status === "gesperrt") return { ok: false, reason: "locked" }
+
+      const customer = dbRef.current.customers.find((entry) => entry.id === account.customerId)
+      if (!customer) return { ok: false, reason: "unknown" }
+
+      const now = new Date().toISOString()
+      setDb((current) => ({
+        ...current,
+        accounts: current.accounts.map((entry) => (entry.id === account.id ? { ...entry, lastLoginAt: now } : entry)),
+      }))
+
+      return { ok: true, account, customer }
+    },
+    [],
+  )
+
   const resetDemoData = useCallback(() => setDb(cloneSeed()), [])
 
   const value = useMemo<DataContextValue>(
@@ -492,6 +673,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       documents: db.documents,
       activities: db.activities,
       messages: db.messages,
+      accounts: db.accounts,
       actor,
       setActor,
       customerById: (id) => db.customers.find((customer) => customer.id === id),
@@ -510,6 +692,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       removeDocument,
       sendMessage,
       markMessageRead,
+      accountOf: (customerId) => db.accounts.find((account) => account.customerId === customerId),
+      createAccount,
+      resetAccountPassword,
+      setAccountStatus,
+      changeOwnPassword,
+      signInCustomer,
       resetDemoData,
     }),
     [
@@ -527,6 +715,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       removeDocument,
       sendMessage,
       markMessageRead,
+      createAccount,
+      resetAccountPassword,
+      setAccountStatus,
+      changeOwnPassword,
+      signInCustomer,
       resetDemoData,
     ],
   )

@@ -19,7 +19,8 @@ import {
   cellStrong,
   rowClass,
 } from "@/components/ui/primitives"
-import { useToast } from "@/components/ui/overlays"
+import { Modal, useToast } from "@/components/ui/overlays"
+import { Field, TextInput } from "@/components/ui/form"
 import { formatDate, formatDateTime, formatEuro, formatFileSize, formatPercent, initialsOf } from "@/lib/format"
 import { currentValue, customerTotals, daysToMaturity, effectiveStatus, interestAtMaturity } from "@/lib/finance"
 import { useData } from "@/lib/store"
@@ -31,9 +32,11 @@ import { documentCategoryLabels as categoryLabels, interestPaymentLabels, produc
 export function CustomerDashboard() {
   const router = useRouter()
   const { user, signOut } = useSession()
-  const { customerById, investmentsOf, documentsOf, messagesOf, markMessageRead } = useData()
+  const { customerById, investmentsOf, documentsOf, messagesOf, markMessageRead, accountOf, changeOwnPassword } =
+    useData()
   const toast = useToast()
   const [tab, setTab] = useState("overview")
+  const [passwordOpen, setPasswordOpen] = useState(false)
 
   // The session carries exactly one customer id – nothing else is reachable.
   const customerId = user?.customerId ?? ""
@@ -42,6 +45,7 @@ export function CustomerDashboard() {
   const documents = useMemo(() => documentsOf(customerId), [documentsOf, customerId])
   const messages = useMemo(() => messagesOf(customerId), [messagesOf, customerId])
   const totals = useMemo(() => customerTotals(investments), [investments])
+  const account = accountOf(customerId)
 
   if (!customer) {
     return (
@@ -80,6 +84,9 @@ export function CustomerDashboard() {
               </div>
               <div className="num text-[12px] text-[var(--muted)]">{customer.customerNumber}</div>
             </div>
+            <Button size="sm" onClick={() => setPasswordOpen(true)}>
+              Passwort ändern
+            </Button>
             <Button
               size="sm"
               onClick={() => {
@@ -95,6 +102,17 @@ export function CustomerDashboard() {
       </header>
 
       <main className="mx-auto max-w-[1080px] space-y-5 px-4 py-6 sm:px-6">
+        {account?.mustChangePassword && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--warn)] bg-[var(--warn-soft)] px-5 py-4">
+            <p className="text-[13.5px] font-medium text-[var(--warn)]">
+              Bitte vergeben Sie ein eigenes Passwort – Sie melden sich noch mit dem Startpasswort an.
+            </p>
+            <Button size="sm" onClick={() => setPasswordOpen(true)}>
+              Jetzt ändern
+            </Button>
+          </div>
+        )}
+
         <div>
           <h1 className="text-[27px] font-semibold tracking-tight text-[var(--ink)]">Willkommen, {customer.firstName}</h1>
           <p className="mt-1.5 text-sm text-[var(--muted)]">Ihre Anlagen bei Pick The Bank auf einen Blick.</p>
@@ -271,10 +289,112 @@ export function CustomerDashboard() {
           </Card>
         )}
 
-        <p className="pb-6 text-[12.5px] text-[var(--faint)]">
+        <p className="pb-6 text-[12.5px] leading-relaxed text-[var(--faint)]">
+          Sie haben Lesezugriff auf Ihre eigenen Daten. Änderungen an Stammdaten und Anlagen nimmt ausschließlich Pick
+          The Bank nach Legitimationsprüfung vor. Ihr Passwort können Sie jederzeit selbst ändern.
+          <br />
           Prototyp mit Demodaten · Alle Beträge werden aus Anlagebetrag, Zinssatz und Laufzeit berechnet.
         </p>
+
+        <ChangePasswordModal
+          open={passwordOpen}
+          accountId={account?.id ?? null}
+          onClose={() => setPasswordOpen(false)}
+          onSubmit={changeOwnPassword}
+          onDone={() => toast("Ihr Passwort wurde geändert.")}
+        />
       </main>
     </div>
+  )
+}
+
+function ChangePasswordModal({
+  open,
+  accountId,
+  onClose,
+  onSubmit,
+  onDone,
+}: {
+  open: boolean
+  accountId: string | null
+  onClose: () => void
+  onSubmit: (accountId: string, currentPassword: string, newPassword: string) => Promise<boolean>
+  onDone: () => void
+}) {
+  const [current, setCurrent] = useState("")
+  const [next, setNext] = useState("")
+  const [repeat, setRepeat] = useState("")
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
+
+  const save = async () => {
+    const found: Record<string, string> = {}
+    if (!current) found.current = "Bitte geben Sie Ihr aktuelles Passwort ein."
+    if (next.trim().length < 10) found.next = "Das neue Passwort muss mindestens 10 Zeichen haben."
+    if (next !== repeat) found.repeat = "Die Eingaben stimmen nicht überein."
+    setErrors(found)
+    if (Object.keys(found).length || !accountId) return
+
+    setBusy(true)
+    const ok = await onSubmit(accountId, current, next)
+    setBusy(false)
+
+    if (!ok) {
+      setErrors({ current: "Das aktuelle Passwort ist nicht korrekt." })
+      return
+    }
+
+    setCurrent("")
+    setNext("")
+    setRepeat("")
+    onDone()
+    onClose()
+  }
+
+  return (
+    <Modal
+      open={open}
+      title="Passwort ändern"
+      subtitle="Ihr Passwort kennt nur Sie – Pick The Bank kann es lediglich neu vergeben."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Abbrechen</Button>
+          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+            {busy ? "Wird gespeichert …" : "Passwort speichern"}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-4">
+        <Field label="Aktuelles Passwort" required error={errors.current}>
+          <TextInput
+            type="password"
+            autoComplete="current-password"
+            value={current}
+            invalid={Boolean(errors.current)}
+            onChange={(event) => setCurrent(event.target.value)}
+          />
+        </Field>
+        <Field label="Neues Passwort" required error={errors.next} hint="Mindestens 10 Zeichen">
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            value={next}
+            invalid={Boolean(errors.next)}
+            onChange={(event) => setNext(event.target.value)}
+          />
+        </Field>
+        <Field label="Neues Passwort wiederholen" required error={errors.repeat}>
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            value={repeat}
+            invalid={Boolean(errors.repeat)}
+            onChange={(event) => setRepeat(event.target.value)}
+          />
+        </Field>
+      </div>
+    </Modal>
   )
 }

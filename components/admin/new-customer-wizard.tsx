@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import { Icon } from "@/components/admin/icons"
 import { Badge, Button } from "@/components/ui/primitives"
@@ -8,6 +8,7 @@ import { Field, Select, TextInput, isDate, isEmail, parseAmount, parseRate } fro
 import { FileDrop, Modal, useToast } from "@/components/ui/overlays"
 import { formatDate, formatEuro, formatFileSize, formatPercent } from "@/lib/format"
 import { addMonths } from "@/lib/finance"
+import { CredentialsModal } from "@/components/admin/access-card"
 import { useData, type PendingFile } from "@/lib/store"
 import { interestPaymentLabels, kycLabels, productLabels } from "@/lib/labels"
 import type { DocumentCategory, InterestPayment, KycStatus, ProductType } from "@/lib/types"
@@ -39,6 +40,7 @@ type Draft = {
   identificationType: string
   kycStatus: string
   identifiedAt: string
+  createAccess: boolean
   productType: ProductType
   principal: string
   currency: string
@@ -68,6 +70,7 @@ const emptyDraft = (customerNumber: string): Draft => ({
   identificationType: "Personalausweis",
   kycStatus: "offen",
   identifiedAt: "",
+  createAccess: true,
   productType: "festgeld",
   principal: "",
   currency: "EUR",
@@ -97,7 +100,7 @@ export function NewCustomerWizard({
   onClose: () => void
   onCreated: (customerId: string) => void
 }) {
-  const { createCustomer, nextCustomerNumber } = useData()
+  const { createCustomer, createAccount, nextCustomerNumber } = useData()
   const toast = useToast()
 
   const [step, setStep] = useState(1)
@@ -105,6 +108,8 @@ export function NewCustomerWizard({
   const [files, setFiles] = useState<PendingFile[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [restored, setRestored] = useState(false)
+  const [credentials, setCredentials] = useState<{ email: string; password: string; name: string } | null>(null)
+  const pendingCustomerId = useRef<string | null>(null)
 
   // Restore an interrupted entry so nothing is lost on a reload.
   useEffect(() => {
@@ -161,6 +166,8 @@ export function NewCustomerWizard({
     })
   }
 
+  const toggleAccess = (value: boolean) => setDraft((current) => ({ ...current, createAccess: value }))
+
   const validateStep = (target: number) => {
     const found: Record<string, string> = {}
 
@@ -212,7 +219,7 @@ export function NewCustomerWizard({
     }
   }, [draft.principal, draft.interestRate])
 
-  const submit = () => {
+  const submit = async () => {
     for (const target of [1, 2, 3, 4]) {
       if (!validateStep(target)) {
         setStep(target)
@@ -264,6 +271,18 @@ export function NewCustomerWizard({
     }
 
     toast("Kunde wurde erfolgreich angelegt.")
+
+    if (draft.createAccess) {
+      const password = await createAccount(customer.id, draft.email.trim())
+      setCredentials({
+        email: draft.email.trim().toLowerCase(),
+        password,
+        name: `${draft.firstName} ${draft.lastName}`.trim(),
+      })
+      pendingCustomerId.current = customer.id
+      return
+    }
+
     onCreated(customer.id)
   }
 
@@ -290,7 +309,7 @@ export function NewCustomerWizard({
               Weiter
             </Button>
           ) : (
-            <Button variant="primary" onClick={submit}>
+            <Button variant="primary" onClick={() => void submit()}>
               Kunde erstellen
             </Button>
           )}
@@ -389,6 +408,22 @@ export function NewCustomerWizard({
           <Field label="Identifikationsdatum" error={errors.identifiedAt}>
             <TextInput type="date" value={draft.identifiedAt} invalid={Boolean(errors.identifiedAt)} onChange={(event) => set("identifiedAt", event.target.value)} />
           </Field>
+
+          <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-sunken)] px-4 py-3.5">
+            <input
+              type="checkbox"
+              checked={draft.createAccess}
+              onChange={(event) => toggleAccess(event.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+            />
+            <span>
+              <span className="block text-[13.5px] font-semibold text-[var(--ink)]">Kundenzugang anlegen</span>
+              <span className="block text-[12.5px] leading-relaxed text-[var(--muted)]">
+                Erstellt einen Login mit der E-Mail-Adresse des Kunden. Das Passwort wird nach dem Speichern einmalig
+                angezeigt. Der Kunde kann seine Daten nur einsehen.
+              </span>
+            </span>
+          </label>
         </div>
       )}
 
@@ -523,6 +558,7 @@ export function NewCustomerWizard({
               ["Ausweisart", draft.identificationType],
               ["KYC-Status", kycLabels[draft.kycStatus as KycStatus]],
               ["Identifiziert am", draft.identifiedAt ? formatDate(draft.identifiedAt) : "–"],
+              ["Kundenzugang", draft.createAccess ? `wird angelegt für ${draft.email || "–"}` : "wird nicht angelegt"],
             ]}
           />
           <SummaryBlock
@@ -553,6 +589,19 @@ export function NewCustomerWizard({
           </p>
         </div>
       )}
+
+      <CredentialsModal
+        open={Boolean(credentials)}
+        email={credentials?.email ?? ""}
+        password={credentials?.password ?? ""}
+        customerName={credentials?.name ?? ""}
+        onClose={() => {
+          setCredentials(null)
+          const id = pendingCustomerId.current
+          pendingCustomerId.current = null
+          if (id) onCreated(id)
+        }}
+      />
     </Modal>
   )
 }
