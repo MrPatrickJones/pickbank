@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: #f4f7ff;
+  color: #001855;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes ptb-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ptb-in {
+  animation: ptb-in 0.25s ease;
+}
+
+@media print {
+  .ptb-no-print {
+    display: none !important;
+  }
+}
