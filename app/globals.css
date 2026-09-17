@@ -4,18 +4,80 @@
 
 :root {
   color-scheme: light;
+
+  --navy: #0b1d3a;
+  --navy-soft: #13294f;
+  --navy-line: #1d3563;
+
+  --ink: #0f1d33;
+  --body: #44526b;
+  --muted: #6b7a96;
+  --faint: #93a0b8;
+
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-sunken: #f7f9fd;
+  --line: #e6ebf4;
+  --line-soft: #f1f4fa;
+
+  --accent: #1f4fd8;
+  --accent-strong: #1a43ba;
+  --accent-soft: #eaf0ff;
+  --gold: #a98545;
+
+  --good: #147a52;
+  --good-soft: #e8f5ef;
+  --warn: #8a6100;
+  --warn-soft: #fdf3e2;
+  --danger: #a72b22;
+  --danger-soft: #fbeceb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
 }
 
 body {
-  background: #f4f7ff;
-  color: #001855;
+  background: var(--bg);
+  color: var(--ink);
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv05" 1;
 }
 
-@keyframes ptb-in {
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::placeholder {
+  color: var(--faint);
+}
+
+/* Scrollbars stay discreet inside the app shell. */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #d7deea;
+  border-radius: 999px;
+}
+
+@keyframes ptb-rise {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -23,12 +85,19 @@ body {
   }
 }
 
-.ptb-in {
-  animation: ptb-in 0.25s ease;
+.rise {
+  animation: ptb-rise 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @media print {
-  .ptb-no-print {
+  .no-print {
     display: none !important;
   }
 }

@@ -1,27 +1,33 @@
 import type { Metadata } from "next"
 import type React from "react"
-import { Poppins } from "next/font/google"
+import { Instrument_Sans } from "next/font/google"
 
-import { LocaleProvider } from "@/lib/i18n"
+import { ToastProvider } from "@/components/ui/overlays"
+import { DataProvider } from "@/lib/store"
+import { SessionProvider } from "@/lib/session"
 import "./globals.css"
 
-const poppins = Poppins({
+const sans = Instrument_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   display: "swap",
 })
 
 export const metadata: Metadata = {
-  title: "PickTheBank · Kundenportal",
+  title: "Pick The Bank · Kundenportal",
   description:
-    "Kundenportal von PickTheBank: Einlagen, Zinsgutschriften, Fälligkeiten und Portfolio-Reports auf einen Blick.",
+    "Kundenportal und Verwaltung von Pick The Bank: Kunden, Festgeldanlagen, Dokumente und Aktivitäten an einem Ort.",
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="de" className={poppins.className}>
+    <html lang="de" className={sans.className}>
       <body>
-        <LocaleProvider>{children}</LocaleProvider>
+        <SessionProvider>
+          <DataProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </DataProvider>
+        </SessionProvider>
       </body>
     </html>
   )
