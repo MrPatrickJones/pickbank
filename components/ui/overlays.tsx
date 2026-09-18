@@ -40,7 +40,7 @@ export function Modal({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-[rgba(11,29,58,.45)] p-0 sm:items-start sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-[rgba(15,29,51,.28)] p-0 sm:items-start sm:p-6">
       <div
         role="dialog"
         aria-modal="true"
@@ -192,7 +192,7 @@ export function FileDrop({
         handle(event.dataTransfer.files)
       }}
       className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-5 py-8 text-center transition-colors ${
-        over ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--line)] bg-[var(--surface-sunken)]"
+        over ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--line)] bg-white"
       }`}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6 text-[var(--muted)]">

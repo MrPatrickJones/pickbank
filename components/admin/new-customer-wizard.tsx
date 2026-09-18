@@ -392,7 +392,7 @@ export function NewCustomerWizard({
             <TextInput type="date" value={draft.identifiedAt} onChange={(event) => set("identifiedAt", event.target.value)} />
           </Field>
 
-          <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-sunken)] px-4 py-3.5">
+          <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line)] bg-white px-4 py-3.5">
             <input
               type="checkbox"
               checked={draft.createLogin}
@@ -412,7 +412,7 @@ export function NewCustomerWizard({
 
       {step === 4 && (
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-sunken)] px-4 py-3.5">
+          <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line)] bg-white px-4 py-3.5">
             <input
               type="checkbox"
               checked={draft.withAccount}

@@ -175,7 +175,7 @@ export function CustomersView({
         </div>
 
         {showFilters && (
-          <div className="grid gap-4 border-b border-[var(--line-soft)] bg-[var(--surface-sunken)] px-5 py-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 border-b border-[var(--line-soft)] bg-white px-5 py-4 sm:grid-cols-2 xl:grid-cols-4">
             <Field label="Status">
               <Select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }}>
                 <option value="">Alle</option>

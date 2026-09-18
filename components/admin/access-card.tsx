@@ -59,7 +59,7 @@ export function CredentialsModal({
         ].map((entry) => (
           <div
             key={entry.label}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-sunken)] px-4 py-3"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white px-4 py-3"
           >
             <div className="min-w-0">
               <div className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-[var(--faint)]">{entry.label}</div>

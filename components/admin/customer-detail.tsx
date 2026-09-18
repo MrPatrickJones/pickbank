@@ -78,7 +78,7 @@ export function CustomerDetail({ customerId, onBack }: { customerId: number; onB
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-4">
-          <span className="grid h-14 w-14 place-items-center rounded-full bg-[var(--navy)] text-[16px] font-semibold text-white">
+          <span className="grid h-14 w-14 place-items-center rounded-full border border-[var(--line)] bg-[var(--accent-soft)] text-[16px] font-semibold text-[var(--accent)]">
             {initialsOf(customer.firstName, customer.lastName)}
           </span>
           <div>
@@ -693,7 +693,7 @@ function UploadModal({
       <div className="space-y-4">
         <FileDrop onFiles={(files) => { setFile(files[0] ?? null); setError("") }} />
         {file && (
-          <p className="rounded-lg bg-[var(--surface-sunken)] px-4 py-2.5 text-[13px] text-[var(--body)]">
+          <p className="rounded-lg border border-[var(--line)] bg-white px-4 py-2.5 text-[13px] text-[var(--body)]">
             Ausgewählt: <strong className="text-[var(--ink)]">{file.filename}</strong>{" "}
             <span className="num text-[var(--faint)]">({formatFileSize(file.sizeKb)})</span>
           </p>

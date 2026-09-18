@@ -210,7 +210,7 @@ export function CustomerDashboard() {
               </section>
             )}
 
-            <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface-sunken)] px-6 py-5">
+            <section className="rounded-2xl border border-[var(--line)] bg-white px-6 py-5">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="text-[13px] leading-relaxed text-[var(--muted)]">
                   <p className="font-semibold text-[var(--ink)]">

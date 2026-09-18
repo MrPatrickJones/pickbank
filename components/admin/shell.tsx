@@ -121,12 +121,12 @@ export function AdminShell() {
           type="button"
           aria-label="Menü schließen"
           onClick={() => setNavOpen(false)}
-          className="fixed inset-0 z-30 bg-[rgba(11,29,58,.5)] lg:hidden"
+          className="fixed inset-0 z-30 bg-[rgba(15,29,51,.28)] lg:hidden"
         />
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[264px] flex-col bg-[var(--navy)] text-white transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-[264px] flex-col border-r border-[var(--line)] bg-white text-[var(--ink)] transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -144,20 +144,20 @@ export function AdminShell() {
               width={230}
               height={46}
               priority
-              className="h-[38px] w-auto brightness-0 invert"
+              className="h-[38px] w-auto"
             />
           </a>
           <button
             type="button"
             onClick={() => setNavOpen(false)}
             aria-label="Menü schließen"
-            className="rounded-lg p-1.5 text-white/60 hover:text-white lg:hidden"
+            className="rounded-lg p-1.5 text-[var(--faint)] hover:text-[var(--ink)] lg:hidden"
           >
             <Icon name="menu" className="h-5 w-5" />
           </button>
         </div>
 
-        <p className="px-6 pb-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">
+        <p className="px-6 pb-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--faint)]">
           Verwaltung · Festgeldanlagen
         </p>
 
@@ -172,25 +172,25 @@ export function AdminShell() {
                 aria-current={active}
                 className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-left text-[14px] transition-colors ${
                   active
-                    ? "bg-white/[0.12] font-semibold text-white"
-                    : "font-medium text-white/70 hover:bg-white/[0.07] hover:text-white"
+                    ? "bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
+                    : "font-medium text-[var(--body)] hover:bg-[var(--surface-sunken)] hover:text-[var(--ink)]"
                 }`}
               >
-                <Icon name={item.icon} className={`h-[18px] w-[18px] ${active ? "text-white" : "text-white/55"}`} />
+                <Icon name={item.icon} className={`h-[18px] w-[18px] ${active ? "text-[var(--accent)]" : "text-[var(--faint)]"}`} />
                 {item.label}
               </button>
             )
           })}
         </nav>
 
-        <div className="border-t border-white/10 px-5 py-4">
+        <div className="border-t border-[var(--line)] px-5 py-4">
           <div className="flex items-center gap-3">
-            <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-white/15 text-[12px] font-semibold">
+            <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-[var(--accent-soft)] text-[12px] font-semibold text-[var(--accent)]">
               {initials}
             </span>
             <div className="min-w-0">
               <div className="truncate text-[13.5px] font-semibold">{user?.fullName}</div>
-              <div className="truncate text-[12px] text-white/60">{user ? roleLabel[user.role] : ""}</div>
+              <div className="truncate text-[12px] text-[var(--muted)]">{user ? roleLabel[user.role] : ""}</div>
             </div>
           </div>
           <button
@@ -199,7 +199,7 @@ export function AdminShell() {
               await signOut()
               router.replace("/login")
             }}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-white/15 py-2 text-[13px] font-semibold text-white/80 transition-colors hover:border-white/40 hover:text-white"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--line)] bg-white py-2 text-[13px] font-semibold text-[var(--body)] transition-colors hover:border-[var(--accent)] hover:text-[var(--ink)]"
           >
             <Icon name="logout" className="h-4 w-4" />
             Abmelden
@@ -290,7 +290,7 @@ export function AdminShell() {
           </div>
 
           <div className="ml-auto flex items-center gap-2.5 rounded-lg border border-[var(--line)] py-1 pl-1 pr-3">
-            <span className="grid h-8 w-8 place-items-center rounded-md bg-[var(--navy)] text-[11px] font-semibold text-white">
+            <span className="grid h-8 w-8 place-items-center rounded-md bg-[var(--accent-soft)] text-[11px] font-semibold text-[var(--accent)]">
               {initials}
             </span>
             <span className="hidden text-[13px] font-semibold text-[var(--ink)] sm:block">{user?.fullName}</span>

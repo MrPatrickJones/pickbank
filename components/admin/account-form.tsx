@@ -243,7 +243,7 @@ export function AccountForm({
         )}
 
         {preview !== null && Number.isFinite(preview) && (
-          <p className="mt-5 rounded-xl bg-[var(--surface-sunken)] px-4 py-3 text-[13px] text-[var(--body)]">
+          <p className="mt-5 rounded-xl border border-[var(--line)] bg-white px-4 py-3 text-[13px] text-[var(--body)]">
             Zinsertrag bei Laufzeitende:{" "}
             <strong className="num text-[var(--ink)]">{formatAmount(preview.toFixed(2), form.currency)}</strong>{" "}
             <span className="text-[var(--faint)]">
