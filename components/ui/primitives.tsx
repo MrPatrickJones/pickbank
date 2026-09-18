@@ -2,7 +2,8 @@
 
 import type React from "react"
 
-import type { CustomerStatus, InvestmentStatus, KycStatus } from "@/lib/types"
+import { accountStatusLabels, customerStatusLabels, kycLabels } from "@/lib/labels"
+import type { AccountStatus, CustomerStatus, KycStatus } from "@/lib/types"
 
 /* ---------------- Buttons ---------------- */
 
@@ -129,55 +130,61 @@ export function Badge({ tone = "neutral", children }: { tone?: Tone; children: R
   )
 }
 
-const customerStatusMap: Record<CustomerStatus, { label: string; tone: Tone }> = {
-  aktiv: { label: "Aktiv", tone: "good" },
-  pruefung: { label: "In Prüfung", tone: "info" },
-  ausstehend: { label: "Ausstehend", tone: "warn" },
-  inaktiv: { label: "Inaktiv", tone: "neutral" },
+const customerTone: Record<CustomerStatus, Tone> = {
+  ACTIVE: "good",
+  PENDING: "warn",
+  INACTIVE: "neutral",
+  BLOCKED: "danger",
 }
 
-const investmentStatusMap: Record<InvestmentStatus, { label: string; tone: Tone }> = {
-  aktiv: { label: "Aktiv", tone: "good" },
-  faellig: { label: "Fällig", tone: "warn" },
-  beendet: { label: "Beendet", tone: "neutral" },
-  vorgemerkt: { label: "Vorgemerkt", tone: "info" },
+const accountTone: Record<AccountStatus, Tone> = {
+  ACTIVE: "good",
+  PENDING: "info",
+  MATURED: "warn",
+  CLOSED: "neutral",
+  CANCELLED: "danger",
 }
 
-const kycStatusMap: Record<KycStatus, { label: string; tone: Tone }> = {
-  offen: { label: "KYC offen", tone: "warn" },
-  eingereicht: { label: "KYC eingereicht", tone: "info" },
-  geprueft: { label: "KYC geprüft", tone: "good" },
-  abgelehnt: { label: "KYC abgelehnt", tone: "danger" },
+const kycTone: Record<KycStatus, Tone> = {
+  VERIFIED: "good",
+  SUBMITTED: "info",
+  OPEN: "warn",
+  REJECTED: "danger",
 }
-
-export const customerStatusOptions = Object.entries(customerStatusMap).map(([value, entry]) => ({
-  value: value as CustomerStatus,
-  label: entry.label,
-}))
-
-export const investmentStatusOptions = Object.entries(investmentStatusMap).map(([value, entry]) => ({
-  value: value as InvestmentStatus,
-  label: entry.label,
-}))
-
-export const kycStatusOptions = Object.entries(kycStatusMap).map(([value, entry]) => ({
-  value: value as KycStatus,
-  label: entry.label.replace("KYC ", ""),
-}))
 
 export function CustomerStatusBadge({ status }: { status: CustomerStatus }) {
-  const entry = customerStatusMap[status]
-  return <Badge tone={entry.tone}>{entry.label}</Badge>
+  return <Badge tone={customerTone[status]}>{customerStatusLabels[status]}</Badge>
 }
 
-export function InvestmentStatusBadge({ status }: { status: InvestmentStatus }) {
-  const entry = investmentStatusMap[status]
-  return <Badge tone={entry.tone}>{entry.label}</Badge>
+export function AccountStatusBadge({ status }: { status: AccountStatus }) {
+  return <Badge tone={accountTone[status]}>{accountStatusLabels[status]}</Badge>
 }
 
 export function KycBadge({ status }: { status: KycStatus }) {
-  const entry = kycStatusMap[status]
-  return <Badge tone={entry.tone}>{entry.label}</Badge>
+  return <Badge tone={kycTone[status]}>KYC {kycLabels[status].toLowerCase()}</Badge>
+}
+
+/** Shown while a screen loads its data from the API. */
+export function LoadingState({ label = "Wird geladen …" }: { label?: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2.5 px-5 py-14 text-sm text-[var(--muted)]">
+      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--line)] border-t-[var(--accent)]" />
+      {label}
+    </div>
+  )
+}
+
+export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="px-5 py-12 text-center">
+      <p className="text-sm font-semibold text-[var(--danger)]">{message}</p>
+      {onRetry && (
+        <Button size="sm" className="mt-3" onClick={onRetry}>
+          Erneut versuchen
+        </Button>
+      )}
+    </div>
+  )
 }
 
 /* ---------------- Table ---------------- */

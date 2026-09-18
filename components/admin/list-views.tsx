@@ -1,94 +1,71 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useState } from "react"
 
 import {
+  AccountStatusBadge,
   Badge,
   Button,
   Card,
   EmptyState,
-  InvestmentStatusBadge,
+  ErrorState,
   Kpi,
+  LoadingState,
   PageHeader,
   SearchInput,
   Table,
   cell,
   cellRight,
   cellStrong,
-  investmentStatusOptions,
   rowClass,
 } from "@/components/ui/primitives"
 import { Field, Select } from "@/components/ui/form"
-import { useToast } from "@/components/ui/overlays"
-import { formatDate, formatDateTime, formatEuro, formatFileSize, formatPercent } from "@/lib/format"
-import { TODAY, currentValue, daysToMaturity, effectiveStatus, interestAtMaturity } from "@/lib/finance"
-import { useData } from "@/lib/store"
-import { documentCategoryLabels as categoryLabels } from "@/lib/labels"
+import { api, buildQuery } from "@/lib/api"
+import { daysUntil, formatAmount, formatDate, formatDateTime, formatFileSize, formatPercent } from "@/lib/format"
+import { accountStatusOptions, documentCategoryLabels, documentCategoryOptions } from "@/lib/labels"
+import { useResource } from "@/lib/use-resource"
+import type { AccountWithCustomer, AuditEntry, Message, PortalDocument } from "@/lib/types"
 
+/* ---------------- Accounts ---------------- */
 
-
-const matches = (query: string, ...values: string[]) =>
-  !query.trim() || values.join(" ").toLowerCase().includes(query.trim().toLowerCase())
-
-/* ---------------- Investments ---------------- */
-
-export function InvestmentsView({
+export function AccountsView({
   onOpenCustomer,
-  fixedTermOnly = false,
+  title = "Festgeldkonten",
+  subtitle = "Alle Konten über sämtliche Kunden hinweg.",
 }: {
-  onOpenCustomer: (id: string) => void
-  fixedTermOnly?: boolean
+  onOpenCustomer: (id: number) => void
+  title?: string
+  subtitle?: string
 }) {
-  const { investments, customers } = useData()
-  const [query, setQuery] = useState("")
+  const [search, setSearch] = useState("")
   const [status, setStatus] = useState("")
 
-  const rows = useMemo(() => {
-    return investments
-      .filter((investment) => (fixedTermOnly ? investment.productType === "festgeld" : true))
-      .filter((investment) => (status ? effectiveStatus(investment) === status : true))
-      .map((investment) => ({
-        investment,
-        customer: customers.find((entry) => entry.id === investment.customerId),
-      }))
-      .filter(({ investment, customer }) =>
-        matches(
-          query,
-          investment.investmentNumber,
-          investment.referenceAccount,
-          customer ? `${customer.firstName} ${customer.lastName} ${customer.customerNumber}` : "",
-        ),
-      )
-      .sort((a, b) => a.investment.maturityDate.localeCompare(b.investment.maturityDate))
-  }, [investments, customers, query, status, fixedTermOnly])
+  const { data, loading, error, reload } = useResource<{ accounts: AccountWithCustomer[] }>(
+    () => api.get(`/api/accounts${buildQuery({ search, status })}`),
+    [search, status],
+  )
 
-  const volume = rows.reduce((sum, entry) => sum + entry.investment.principal, 0)
-  const interest = rows.reduce((sum, entry) => sum + interestAtMaturity(entry.investment), 0)
+  const accounts = data?.accounts ?? []
+  const volume = accounts.reduce((sum, account) => sum + Number(account.principalAmount), 0)
+  const interest = accounts.reduce((sum, account) => sum + Number(account.interestAtMaturity), 0)
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title={fixedTermOnly ? "Festgeldkonten" : "Anlagen"}
-        subtitle={
-          fixedTermOnly
-            ? "Alle Festgeldverträge mit Laufzeit, Zins und Fälligkeit."
-            : "Sämtliche Anlagen über alle Kunden hinweg."
-        }
-      />
+      <PageHeader title={title} subtitle={subtitle} />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Kpi label="Verträge" value={String(rows.length)} hint="in der aktuellen Auswahl" />
-        <Kpi label="Volumen" value={formatEuro(volume, 0)} tone="accent" />
-        <Kpi label="Zinsen bei Laufzeitende" value={formatEuro(interest, 0)} tone="good" />
+        <Kpi label="Konten" value={String(accounts.length)} hint="in der aktuellen Auswahl" />
+        <Kpi label="Volumen" value={formatAmount(volume.toFixed(2), "EUR", 0)} tone="accent" />
+        <Kpi label="Zinsen bei Laufzeitende" value={formatAmount(interest.toFixed(2), "EUR", 0)} tone="good" />
       </div>
 
       <Card>
         <div className="flex flex-wrap items-end gap-3 border-b border-[var(--line-soft)] px-5 py-4">
-          <SearchInput value={query} onChange={setQuery} placeholder="Anlage-ID, Kunde oder Referenzkonto" className="min-w-[240px] flex-1" />
+          <SearchInput value={search} onChange={setSearch} placeholder="Kontonummer, Kunde oder Referenzkonto" className="min-w-[240px] flex-1" />
           <Field label="Status" className="w-[190px]">
             <Select value={status} onChange={(event) => setStatus(event.target.value)}>
               <option value="">Alle</option>
-              {investmentStatusOptions.map((option) => (
+              {accountStatusOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -97,38 +74,40 @@ export function InvestmentsView({
           </Field>
         </div>
 
-        {rows.length === 0 ? (
-          <EmptyState title="Keine Anlagen gefunden" hint="Passen Sie Suche oder Filter an." />
-        ) : (
+        {loading && !data && <LoadingState />}
+        {error && <ErrorState message={error} onRetry={reload} />}
+        {data && accounts.length === 0 && <EmptyState title="Keine Konten gefunden" hint="Passen Sie Suche oder Filter an." />}
+
+        {accounts.length > 0 && (
           <Table
             minWidth={1040}
             headers={[
-              "Anlage",
+              "Konto",
               "Kunde",
               { label: "Betrag", align: "right" },
               { label: "Zinssatz", align: "right" },
               "Laufzeit",
               "Start",
               "Fälligkeit",
-              { label: "Aktueller Wert", align: "right" },
+              { label: "Zinsertrag", align: "right" },
               "Status",
             ]}
           >
-            {rows.map(({ investment, customer }) => (
-              <tr key={investment.id} className={`${rowClass} cursor-pointer`} onClick={() => onOpenCustomer(investment.customerId)}>
-                <td className={`${cellStrong} num`}>{investment.investmentNumber}</td>
+            {accounts.map((account) => (
+              <tr key={account.id} className={`${rowClass} cursor-pointer`} onClick={() => onOpenCustomer(account.customer.id)}>
+                <td className={`${cellStrong} num`}>{account.accountNumber}</td>
                 <td className={cell}>
-                  {customer ? `${customer.firstName} ${customer.lastName}` : "–"}
-                  <div className="num text-[12px] text-[var(--faint)]">{customer?.customerNumber}</div>
+                  {account.customer.firstName} {account.customer.lastName}
+                  <div className="num text-[12px] text-[var(--faint)]">{account.customer.customerNumber}</div>
                 </td>
-                <td className={cellRight}>{formatEuro(investment.principal, 0)}</td>
-                <td className={cellRight}>{formatPercent(investment.interestRate)}</td>
-                <td className={cell}>{investment.term} Monate</td>
-                <td className={`${cell} num`}>{formatDate(investment.startDate)}</td>
-                <td className={`${cell} num`}>{formatDate(investment.maturityDate)}</td>
-                <td className={cellRight}>{formatEuro(currentValue(investment))}</td>
+                <td className={cellRight}>{formatAmount(account.principalAmount, account.currency, 0)}</td>
+                <td className={cellRight}>{formatPercent(account.interestRate)}</td>
+                <td className={cell}>{account.termMonths} Monate</td>
+                <td className={`${cell} num`}>{formatDate(account.startDate)}</td>
+                <td className={`${cell} num`}>{formatDate(account.maturityDate)}</td>
+                <td className={cellRight}>{formatAmount(account.accruedInterest, account.currency)}</td>
                 <td className={cell}>
-                  <InvestmentStatusBadge status={effectiveStatus(investment)} />
+                  <AccountStatusBadge status={account.status} />
                 </td>
               </tr>
             ))}
@@ -141,23 +120,16 @@ export function InvestmentsView({
 
 /* ---------------- Documents ---------------- */
 
-export function DocumentsView({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
-  const { documents, customers } = useData()
-  const toast = useToast()
-  const [query, setQuery] = useState("")
+export function DocumentsView({ onOpenCustomer }: { onOpenCustomer: (id: number) => void }) {
+  const [search, setSearch] = useState("")
   const [category, setCategory] = useState("")
 
-  const rows = useMemo(
-    () =>
-      documents
-        .filter((document) => (category ? document.category === category : true))
-        .map((document) => ({ document, customer: customers.find((entry) => entry.id === document.customerId) }))
-        .filter(({ document, customer }) =>
-          matches(query, document.filename, customer ? `${customer.firstName} ${customer.lastName}` : ""),
-        )
-        .sort((a, b) => b.document.uploadedAt.localeCompare(a.document.uploadedAt)),
-    [documents, customers, query, category],
+  const { data, loading, error, reload } = useResource<{ documents: PortalDocument[] }>(
+    () => api.get(`/api/documents${buildQuery({ search, category })}`),
+    [search, category],
   )
+
+  const documents = data?.documents ?? []
 
   return (
     <div className="space-y-5">
@@ -165,43 +137,40 @@ export function DocumentsView({ onOpenCustomer }: { onOpenCustomer: (id: string)
 
       <Card>
         <div className="flex flex-wrap items-end gap-3 border-b border-[var(--line-soft)] px-5 py-4">
-          <SearchInput value={query} onChange={setQuery} placeholder="Dateiname oder Kunde" className="min-w-[240px] flex-1" />
+          <SearchInput value={search} onChange={setSearch} placeholder="Dateiname oder Kunde" className="min-w-[240px] flex-1" />
           <Field label="Kategorie" className="w-[210px]">
             <Select value={category} onChange={(event) => setCategory(event.target.value)}>
               <option value="">Alle</option>
-              {Object.entries(categoryLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
+              {documentCategoryOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </Select>
           </Field>
         </div>
 
-        {rows.length === 0 ? (
-          <EmptyState title="Keine Dokumente gefunden" />
-        ) : (
+        {loading && !data && <LoadingState />}
+        {error && <ErrorState message={error} onRetry={reload} />}
+        {data && documents.length === 0 && <EmptyState title="Keine Dokumente gefunden" />}
+
+        {documents.length > 0 && (
           <Table
-            minWidth={880}
-            headers={["Dateiname", "Kunde", "Kategorie", "Hochgeladen", "Hochgeladen von", { label: "Größe", align: "right" }, { label: "", align: "right" }]}
+            minWidth={820}
+            headers={["Dateiname", "Kunde", "Kategorie", "Hochgeladen", "Hochgeladen von", { label: "Größe", align: "right" }]}
           >
-            {rows.map(({ document, customer }) => (
+            {documents.map((document) => (
               <tr key={document.id} className={rowClass}>
                 <td className={cellStrong}>{document.filename}</td>
                 <td className={cell}>
                   <button type="button" className="hover:text-[var(--accent)]" onClick={() => onOpenCustomer(document.customerId)}>
-                    {customer ? `${customer.firstName} ${customer.lastName}` : "–"}
+                    {document.customer ? `${document.customer.firstName} ${document.customer.lastName}` : "–"}
                   </button>
                 </td>
-                <td className={cell}>{categoryLabels[document.category]}</td>
+                <td className={cell}>{documentCategoryLabels[document.category]}</td>
                 <td className={`${cell} num`}>{formatDate(document.uploadedAt.slice(0, 10))}</td>
-                <td className={cell}>{document.uploadedBy}</td>
+                <td className={cell}>{document.uploadedBy ?? "–"}</td>
                 <td className={cellRight}>{formatFileSize(document.sizeKb)}</td>
-                <td className={`${cell} text-right`}>
-                  <Button size="sm" onClick={() => toast("Download ist im Prototyp nicht hinterlegt.", "info")}>
-                    Download
-                  </Button>
-                </td>
               </tr>
             ))}
           </Table>
@@ -213,47 +182,45 @@ export function DocumentsView({ onOpenCustomer }: { onOpenCustomer: (id: string)
 
 /* ---------------- Payouts ---------------- */
 
-export function PayoutsView({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
-  const { investments, customers } = useData()
-
-  const rows = useMemo(
-    () =>
-      investments
-        .filter((investment) => effectiveStatus(investment) !== "beendet")
-        .map((investment) => ({
-          investment,
-          customer: customers.find((entry) => entry.id === investment.customerId),
-          days: daysToMaturity(investment),
-        }))
-        .filter((entry) => entry.days <= 180)
-        .sort((a, b) => a.investment.maturityDate.localeCompare(b.investment.maturityDate)),
-    [investments, customers],
+export function PayoutsView({ onOpenCustomer }: { onOpenCustomer: (id: number) => void }) {
+  const { data, loading, error, reload } = useResource<{ accounts: AccountWithCustomer[] }>(() =>
+    api.get("/api/accounts?limit=300"),
   )
 
-  const due = rows.filter((entry) => entry.days < 0)
-  const total = rows.reduce((sum, entry) => sum + currentValue(entry.investment), 0)
+  const accounts = (data?.accounts ?? []).filter(
+    (account) => account.status === "ACTIVE" || account.status === "PENDING" || account.status === "MATURED",
+  )
+  const due = accounts.filter((account) => daysUntil(account.maturityDate) <= 0)
+  const upcoming = accounts.filter((account) => {
+    const days = daysUntil(account.maturityDate)
+    return days > 0 && days <= 180
+  })
+  const rows = [...due, ...upcoming].sort((a, b) => a.maturityDate.localeCompare(b.maturityDate))
+  const total = rows.reduce((sum, account) => sum + Number(account.principalAmount) + Number(account.accruedInterest), 0)
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Auszahlungen" subtitle={`Fällige und anstehende Auszahlungen · Stand ${formatDate(TODAY)}`} />
+      <PageHeader title="Auszahlungen" subtitle="Fällige und anstehende Auszahlungen der nächsten 180 Tage." />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Kpi label="Fällig" value={String(due.length)} tone="warn" hint="wartet auf Anweisung" />
-        <Kpi label="Anstehend (180 Tage)" value={String(rows.length - due.length)} />
-        <Kpi label="Auszahlungsvolumen" value={formatEuro(total, 0)} tone="accent" hint="inklusive aufgelaufener Zinsen" />
+        <Kpi label="Anstehend" value={String(upcoming.length)} />
+        <Kpi label="Auszahlungsvolumen" value={formatAmount(total.toFixed(2), "EUR", 0)} tone="accent" hint="inklusive aufgelaufener Zinsen" />
       </div>
 
       <Card title="Auszahlungsplan">
-        {rows.length === 0 ? (
-          <EmptyState title="Keine anstehenden Auszahlungen" />
-        ) : (
+        {loading && !data && <LoadingState />}
+        {error && <ErrorState message={error} onRetry={reload} />}
+        {data && rows.length === 0 && <EmptyState title="Keine anstehenden Auszahlungen" />}
+
+        {rows.length > 0 && (
           <Table
             minWidth={980}
             headers={[
               "Fälligkeit",
               "Auszahlung",
               "Kunde",
-              "Anlage",
+              "Konto",
               { label: "Kapital", align: "right" },
               { label: "Zinsen", align: "right" },
               { label: "Auszahlungsbetrag", align: "right" },
@@ -261,22 +228,32 @@ export function PayoutsView({ onOpenCustomer }: { onOpenCustomer: (id: string) =
               "Status",
             ]}
           >
-            {rows.map(({ investment, customer, days }) => (
-              <tr key={investment.id} className={`${rowClass} cursor-pointer`} onClick={() => onOpenCustomer(investment.customerId)}>
-                <td className={`${cell} num`}>
-                  {formatDate(investment.maturityDate)}
-                  <div className="text-[12px] text-[var(--faint)]">{days < 0 ? `${Math.abs(days)} Tage überfällig` : `in ${days} Tagen`}</div>
-                </td>
-                <td className={`${cell} num`}>{formatDate(investment.payoutDate)}</td>
-                <td className={cellStrong}>{customer ? `${customer.firstName} ${customer.lastName}` : "–"}</td>
-                <td className={`${cell} num`}>{investment.investmentNumber}</td>
-                <td className={cellRight}>{formatEuro(investment.principal, 0)}</td>
-                <td className={cellRight}>{formatEuro(currentValue(investment) - investment.principal)}</td>
-                <td className={`${cellRight} font-semibold text-[var(--ink)]`}>{formatEuro(currentValue(investment))}</td>
-                <td className={`${cell} num text-[12.5px]`}>{investment.referenceAccount}</td>
-                <td className={cell}>{days < 0 ? <Badge tone="warn">Zur Anweisung</Badge> : <Badge tone="info">Geplant</Badge>}</td>
-              </tr>
-            ))}
+            {rows.map((account) => {
+              const days = daysUntil(account.maturityDate)
+              const payout = (Number(account.principalAmount) + Number(account.accruedInterest)).toFixed(2)
+              return (
+                <tr key={account.id} className={`${rowClass} cursor-pointer`} onClick={() => onOpenCustomer(account.customer.id)}>
+                  <td className={`${cell} num whitespace-nowrap`}>
+                    {formatDate(account.maturityDate)}
+                    <div className="text-[12px] text-[var(--faint)]">
+                      {days < 0 ? `${Math.abs(days)} Tage überfällig` : `in ${days} Tagen`}
+                    </div>
+                  </td>
+                  <td className={`${cell} num`}>{account.payoutDate ? formatDate(account.payoutDate) : "–"}</td>
+                  <td className={cellStrong}>
+                    {account.customer.firstName} {account.customer.lastName}
+                  </td>
+                  <td className={`${cell} num`}>{account.accountNumber}</td>
+                  <td className={cellRight}>{formatAmount(account.principalAmount, account.currency, 0)}</td>
+                  <td className={cellRight}>{formatAmount(account.accruedInterest, account.currency)}</td>
+                  <td className={`${cellRight} font-semibold text-[var(--ink)]`}>{formatAmount(payout, account.currency)}</td>
+                  <td className={`${cell} num text-[12.5px]`}>{account.referenceAccount ?? "–"}</td>
+                  <td className={cell}>
+                    {days <= 0 ? <Badge tone="warn">Zur Anweisung</Badge> : <Badge tone="info">Geplant</Badge>}
+                  </td>
+                </tr>
+              )
+            })}
           </Table>
         )}
       </Card>
@@ -286,71 +263,65 @@ export function PayoutsView({ onOpenCustomer }: { onOpenCustomer: (id: string) =
 
 /* ---------------- Activities ---------------- */
 
-export function ActivitiesView({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
-  const { activities, customers } = useData()
-  const [query, setQuery] = useState("")
-  const [customerId, setCustomerId] = useState("")
+export function ActivitiesView({ onOpenCustomer }: { onOpenCustomer: (id: number) => void }) {
+  const [search, setSearch] = useState("")
 
-  const rows = useMemo(
-    () =>
-      activities
-        .filter((activity) => (customerId ? activity.customerId === customerId : true))
-        .filter((activity) => matches(query, activity.action, activity.description, activity.user)),
-    [activities, query, customerId],
+  const { data, loading, error, reload } = useResource<{ entries: AuditEntry[] }>(
+    () => api.get(`/api/audit-log${buildQuery({ search, limit: 200 })}`),
+    [search],
   )
+
+  const entries = data?.entries ?? []
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Aktivitäten"
-        subtitle="Revisionssicheres Protokoll aller Änderungen. Einträge können nicht bearbeitet oder gelöscht werden."
+        subtitle="Revisionssicheres Protokoll aller Änderungen. Einträge lassen sich weder bearbeiten noch löschen."
       />
 
       <Card>
-        <div className="flex flex-wrap items-end gap-3 border-b border-[var(--line-soft)] px-5 py-4">
-          <SearchInput value={query} onChange={setQuery} placeholder="Vorgang, Beschreibung oder Benutzer" className="min-w-[240px] flex-1" />
-          <Field label="Kunde" className="w-[240px]">
-            <Select value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
-              <option value="">Alle Kunden</option>
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.lastName}, {customer.firstName}
-                </option>
-              ))}
-            </Select>
-          </Field>
+        <div className="border-b border-[var(--line-soft)] px-5 py-4">
+          <SearchInput value={search} onChange={setSearch} placeholder="Vorgang, Beschreibung oder Benutzer" className="max-w-[420px]" />
         </div>
 
-        {rows.length === 0 ? (
-          <EmptyState title="Keine Einträge" />
-        ) : (
+        {loading && !data && <LoadingState />}
+        {error && <ErrorState message={error} onRetry={reload} />}
+        {data && entries.length === 0 && <EmptyState title="Keine Einträge" />}
+
+        {entries.length > 0 && (
           <ul className="divide-y divide-[var(--line-soft)]">
-            {rows.slice(0, 80).map((activity) => {
-              const customer = customers.find((entry) => entry.id === activity.customerId)
-              return (
-                <li key={activity.id} className="px-5 py-4">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="num text-[12.5px] font-semibold text-[var(--ink)]">{formatDateTime(activity.timestamp)}</span>
-                    <span className="text-[12.5px] text-[var(--faint)]">{activity.user}</span>
-                  </div>
-                  <p className="mt-1 text-[13.5px] text-[var(--body)]">{activity.description}</p>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                    <Badge tone="neutral">{activity.action}</Badge>
-                    {customer && (
-                      <button type="button" className="text-[12.5px] font-semibold text-[var(--accent)] hover:underline" onClick={() => onOpenCustomer(customer.id)}>
-                        {customer.firstName} {customer.lastName}
-                      </button>
-                    )}
-                    {activity.previousValue && (
-                      <span className="rounded bg-[var(--surface-sunken)] px-2 py-0.5 text-[12px] text-[var(--muted)] line-through">{activity.previousValue}</span>
-                    )}
-                    {activity.newValue && (
-                      <span className="rounded bg-[var(--good-soft)] px-2 py-0.5 text-[12px] font-semibold text-[var(--good)]">{activity.newValue}</span>
-                    )}
-                  </div>
-                </li>
-              )
-            })}
+            {entries.map((entry) => (
+              <li key={entry.id} className="px-5 py-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="num text-[12.5px] font-semibold text-[var(--ink)]">{formatDateTime(entry.createdAt)}</span>
+                  <span className="text-[12.5px] text-[var(--faint)]">{entry.user}</span>
+                </div>
+                <p className="mt-1 text-[13.5px] text-[var(--body)]">{entry.description}</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <Badge tone="neutral">{entry.action}</Badge>
+                  {entry.customerId && (
+                    <button
+                      type="button"
+                      className="text-[12.5px] font-semibold text-[var(--accent)] hover:underline"
+                      onClick={() => onOpenCustomer(entry.customerId as number)}
+                    >
+                      Kundenakte öffnen
+                    </button>
+                  )}
+                  {entry.oldValue && (
+                    <span className="rounded bg-[var(--surface-sunken)] px-2 py-0.5 text-[12px] text-[var(--muted)] line-through">
+                      {entry.oldValue}
+                    </span>
+                  )}
+                  {entry.newValue && (
+                    <span className="rounded bg-[var(--good-soft)] px-2 py-0.5 text-[12px] font-semibold text-[var(--good)]">
+                      {entry.newValue}
+                    </span>
+                  )}
+                </div>
+              </li>
+            ))}
           </ul>
         )}
       </Card>
@@ -360,20 +331,15 @@ export function ActivitiesView({ onOpenCustomer }: { onOpenCustomer: (id: string
 
 /* ---------------- Messages ---------------- */
 
-export function MessagesView({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
-  const { messages, customers } = useData()
-  const [query, setQuery] = useState("")
+export function MessagesView({ onOpenCustomer }: { onOpenCustomer: (id: number) => void }) {
+  const [search, setSearch] = useState("")
 
-  const rows = useMemo(
-    () =>
-      messages
-        .map((message) => ({ message, customer: customers.find((entry) => entry.id === message.customerId) }))
-        .filter(({ message, customer }) =>
-          matches(query, message.subject, message.body, customer ? `${customer.firstName} ${customer.lastName}` : ""),
-        )
-        .sort((a, b) => b.message.sentAt.localeCompare(a.message.sentAt)),
-    [messages, customers, query],
+  const { data, loading, error, reload } = useResource<{ messages: Message[] }>(
+    () => api.get(`/api/messages${buildQuery({ search })}`),
+    [search],
   )
+
+  const messages = data?.messages ?? []
 
   return (
     <div className="space-y-5">
@@ -381,14 +347,16 @@ export function MessagesView({ onOpenCustomer }: { onOpenCustomer: (id: string) 
 
       <Card>
         <div className="border-b border-[var(--line-soft)] px-5 py-4">
-          <SearchInput value={query} onChange={setQuery} placeholder="Betreff, Inhalt oder Kunde" className="max-w-[420px]" />
+          <SearchInput value={search} onChange={setSearch} placeholder="Betreff, Inhalt oder Kunde" className="max-w-[420px]" />
         </div>
 
-        {rows.length === 0 ? (
-          <EmptyState title="Keine Nachrichten" />
-        ) : (
+        {loading && !data && <LoadingState />}
+        {error && <ErrorState message={error} onRetry={reload} />}
+        {data && messages.length === 0 && <EmptyState title="Keine Nachrichten" />}
+
+        {messages.length > 0 && (
           <ul className="divide-y divide-[var(--line-soft)]">
-            {rows.map(({ message, customer }) => (
+            {messages.map((message) => (
               <li key={message.id} className="px-5 py-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-[13.5px] font-semibold text-[var(--ink)]">{message.subject}</span>
@@ -396,13 +364,17 @@ export function MessagesView({ onOpenCustomer }: { onOpenCustomer: (id: string) 
                 </div>
                 <p className="mt-1.5 text-[13.5px] leading-relaxed text-[var(--body)]">{message.body}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-[var(--faint)]">
-                  <span>{message.sentBy}</span>
-                  {customer && (
-                    <button type="button" className="font-semibold text-[var(--accent)] hover:underline" onClick={() => onOpenCustomer(customer.id)}>
-                      {customer.firstName} {customer.lastName}
+                  <span>{message.sentBy ?? "Pick The Bank"}</span>
+                  {message.customer && (
+                    <button
+                      type="button"
+                      className="font-semibold text-[var(--accent)] hover:underline"
+                      onClick={() => onOpenCustomer(message.customerId)}
+                    >
+                      {message.customer.firstName} {message.customer.lastName}
                     </button>
                   )}
-                  {!message.read && <Badge tone="info">Ungelesen</Badge>}
+                  {!message.readAt && <Badge tone="info">Ungelesen</Badge>}
                 </div>
               </li>
             ))}

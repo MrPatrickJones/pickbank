@@ -1,95 +1,106 @@
 # Pick The Bank · Kundenportal
 
-Interaktiver Prototyp des Kundenportals von Pick The Bank mit zwei getrennten
-Bereichen:
+Kundenportal und Verwaltung für Festgeldanlagen – Next.js-Frontend mit eigenem
+Backend (REST-API, MySQL, Sessions, Rollen, Audit-Log).
 
-- **Admin-Dashboard** (`/admin`) – Kundenverwaltung für Mitarbeiterinnen und Mitarbeiter
-- **Kundenansicht** (`/portal`) – jeder Kunde sieht ausschließlich die eigenen Daten
+Zwei Bereiche, eine Anmeldung unter `/login`:
+
+- **Verwaltung** (`/admin`) – für Pick The Bank: Kunden, Festgeldkonten,
+  Dokumente, Nachrichten, Auszahlungen, Aktivitätsprotokoll
+- **Kundenansicht** (`/portal`) – der Kunde sieht ausschließlich seine eigenen
+  Anlagen, Dokumente und Nachrichten und kann nur sein Passwort ändern
 
 ## Stack
 
-Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS · Instrument Sans
+| Schicht | Technologie |
+| --- | --- |
+| Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS |
+| API | Next.js Route Handlers (`app/api/**`), Node-Runtime |
+| Datenbank | MySQL 8 / MariaDB 10.6+ über `mysql2`, SQL-Migrationen |
+| Auth | Server-Sessions (http-only Cookie), scrypt-Hashing, CSRF-Token |
+| Validierung | zod – serverseitig bei jedem schreibenden Request |
 
-## Entwicklung
+## Lokale Einrichtung
 
 ```bash
+cp .env.example .env     # Werte eintragen
 pnpm install
-pnpm dev        # http://localhost:3000 → /login
+pnpm migrate             # Tabellen anlegen
+pnpm seed:admin          # ersten Administrator anlegen
+pnpm dev                 # http://localhost:3000
+```
+
+Optionale Beispieldaten für eine Testumgebung (niemals in Produktion):
+
+```bash
+pnpm seed:demo
+```
+
+## Tests
+
+```bash
 pnpm build
-pnpm lint
+PORT=3101 pnpm start &            # gegen eine Testdatenbank
+BASE_URL=http://127.0.0.1:3101 pnpm test:api
 ```
 
-## Zugänge
+Die Suite prüft Anmeldung, Rollen, Objektzugriff, Validierung, Audit-Log,
+Passwortwechsel, CSRF, Brute-Force-Schutz und Fehlerfälle.
 
-Die Anmeldung unter `/login` hat zwei Bereiche.
+## API
 
-**Kundenlogin** – echte Prüfung gegen die vergebenen Zugangsdaten:
-
-| Kunde | Benutzername | Passwort |
+| Methode | Pfad | Rolle |
 | --- | --- | --- |
-| Max Mustermann (PTB-000001) | max@example.com | PTB-Demo-2026 |
+| POST | `/api/auth/login` | offen |
+| POST | `/api/auth/logout` | angemeldet |
+| GET | `/api/auth/session` | offen |
+| POST | `/api/auth/password` | angemeldet (eigenes Passwort) |
+| POST | `/api/auth/password-reset`, `/api/auth/password-reset/confirm` | offen |
+| GET/POST | `/api/customers` | Mitarbeiter |
+| GET | `/api/customers/:id` | Mitarbeiter, Kunde nur eigener Datensatz |
+| PATCH/PUT | `/api/customers/:id` | Mitarbeiter |
+| DELETE | `/api/customers/:id` | Administrator |
+| GET/POST | `/api/customers/:id/accounts` | GET auch eigener Kunde |
+| GET/PATCH/PUT | `/api/accounts/:id` | GET auch eigener Kunde |
+| GET | `/api/accounts` | Mitarbeiter |
+| GET/POST | `/api/customers/:id/documents`, `/messages` | GET auch eigener Kunde |
+| DELETE | `/api/documents/:id` | Mitarbeiter |
+| POST/GET | `/api/customers/:id/login` | Mitarbeiter (Zugänge vergeben) |
+| GET | `/api/audit-log`, `/api/dashboard` | Mitarbeiter |
+| GET | `/api/me` | Kunde (eigene Daten) |
 
-Weitere Kundenzugänge entstehen ausschließlich im Admin-Bereich (Kundenakte →
-„Zugang anlegen" oder direkt im Assistenten). Das erzeugte Passwort ist einmalig
-sichtbar; gespeichert wird nur ein SHA-256-Hash mit Zufallssalz. Kunden haben
-reinen Lesezugriff und können lediglich ihr eigenes Passwort ändern.
-
-**Mitarbeiterzugang** – Demo-Rollen, Passwort beliebig (mindestens 8 Zeichen):
-
-| Rolle | E-Mail | Zugriff |
-| --- | --- | --- |
-| Administrator | admin@pickthebank.eu | alles inkl. Einstellungen und Benutzerverwaltung |
-| Mitarbeiter | mitarbeiter@pickthebank.eu | Kunden, Anlagen, Dokumente, Nachrichten, Zugänge |
-
-## Funktionsumfang
-
-**Admin**
-
-- Dashboard mit sechs KPI-Karten, Fälligkeiten, Aktivitäten und offenen Vorgängen
-- Kundenliste mit Suche, sieben Filtern, Sortierung, Pagination und Deaktivierung
-- Sechsstufiger Assistent „Neuer Kunde“ inkl. Inline-Validierung, Entwurfs-Speicherung
-  und Zusammenfassung vor dem Speichern
-- Kundenakte mit Stammdaten, Kontakt, Anlagen, Dokumenten, Aktivitäten und Nachrichten
-- Anlagen anlegen und bearbeiten (Betrag, Zins, Laufzeit, Daten, Zinszahlung, Status,
-  Referenzkonto, Notizen) mit Bestätigungsdialog
-- Kundenzugänge: anlegen, Passwort neu vergeben, sperren und entsperren; das Passwort
-  wird einmalig angezeigt, jede Aktion landet im Protokoll
-- Bereiche Anlagen, Festgeldkonten, Dokumente, Auszahlungen, Aktivitäten, Nachrichten,
-  Einstellungen sowie globale Suche über Kunden, Kundennummern, E-Mails und Anlage-IDs
-
-**Kunde**
-
-- Begrüßung, Kennzahlen, große Anlagekarte, Vertragsliste, Dokumente, Nachrichten, Stammdaten
-- Eigenes Passwort ändern; alle übrigen Änderungen bleiben Pick The Bank vorbehalten
-
-## Architektur
+## Datenmodell
 
 ```
-app/            Routen: /login, /admin, /portal
-components/ui   Button, Card, Table, Tabs, Badge, Modal, ConfirmDialog, Toast, FileDrop, Formfelder
-components/admin  Shell, Dashboard, Kundenliste, Kundenakte, Assistent, Anlageformular, Listen, Einstellungen
-components/customer  Kundenansicht
-lib/types.ts    Datenmodell (Customer, Investment, Document, Activity, Message)
-lib/seed.ts     Demodaten: 9 Kunden, 13 Anlagen, Dokumente, Aktivitäten, Nachrichten
-lib/finance.ts  Berechnungen: Zinsen, Laufzeiten, Fälligkeiten, KPIs
-lib/store.tsx   Zustand und alle schreibenden Aktionen – jede Änderung schreibt eine Aktivität
-lib/session.tsx Rollen, Rechte, automatische Abmeldung
-lib/credentials.ts Passwort erzeugen, salzen, hashen und prüfen
+customers ──< fixed_deposit_accounts
+    │                 │
+    ├──< documents ───┘
+    ├──< messages
+    ├──< auth_users (ein Login je Kunde)
+    └──< audit_logs
+auth_users ──< sessions, password_resets
 ```
 
-Die Daten liegen im Browser (`localStorage`). `lib/store.tsx` ist die einzige Stelle,
-die schreibt – ein Austausch gegen eine API betrifft nur diese Datei.
+Beträge liegen als `DECIMAL(18,2)`, Zinssätze als `DECIMAL(6,4)` in der
+Datenbank; gerechnet wird serverseitig in Cent (`server/money.ts`).
 
-## Sicherheit – Stand des Prototyps
+## Sicherheit
 
-Umgesetzt: Rollen und Rechte in der Oberfläche, Kundendaten niemals in der URL,
-Bestätigung bei kritischen Änderungen, Eingabevalidierung, lückenloses
-Aktivitätsprotokoll mit altem und neuem Wert, automatische Abmeldung nach 15 Minuten.
+- Rollen ADMIN / STAFF / CUSTOMER, serverseitig bei jedem Request geprüft
+- Object-Level-Authorization: der Kunde erreicht ausschließlich seine eigene
+  `customer_id`, unabhängig von der angefragten ID
+- Passwörter: scrypt mit Zufallssalz, nie im Klartext gespeichert
+- Sitzungen: Server-Session, http-only/secure/SameSite-Cookie, 15 Minuten
+  Inaktivitätsgrenze, Sperre nach fünf Fehlversuchen, Rate-Limit je IP
+- CSRF-Token für alle schreibenden Anfragen plus Origin-Prüfung
+- Alle Eingaben werden serverseitig mit zod validiert, SQL ausschließlich
+  parametrisiert; Fehlermeldungen enthalten keine internen Details
+- Jede Änderung landet mit Benutzer, Rolle, Zeitpunkt, IP, altem und neuem Wert
+  im `audit_logs`; Kunden haben darauf keinen Zugriff
 
-Kundenpasswörter werden nie im Klartext gespeichert: Das Portal legt einen zufälligen
-Salt und den SHA-256-Hash von `salt:passwort` ab und vergleicht in konstanter Zeit.
-Für den Produktivbetrieb erforderlich: serverseitige Authentifizierung mit einer
-langsamen Hash-Funktion (bcrypt, scrypt, Argon2), Session,
-serverseitige Durchsetzung der Rollen und der Validierung, echte Dokumentenablage,
-Verschlüsselung und ein Audit-Log außerhalb des Browsers. Alle Daten dieses Prototyps
-sind erfunden.
+Secrets stehen ausschließlich in Environment Variables (`.env.example` als
+Vorlage), niemals im Repository.
+
+## Deployment
+
+Siehe **DEPLOYMENT.md** (Namecheap cPanel, portal.pickbank.de).

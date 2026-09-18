@@ -1,38 +1,77 @@
-import type { DocumentCategory, InterestPayment, KycStatus, ProductType, Role } from "@/lib/types"
+import type {
+  AccountStatus,
+  CustomerStatus,
+  DocumentCategory,
+  InterestMethod,
+  KycStatus,
+  Role,
+} from "@/lib/types"
 
-/** German labels for the stored enum values – used wherever data is displayed. */
+export const customerStatusLabels: Record<CustomerStatus, string> = {
+  ACTIVE: "Aktiv",
+  INACTIVE: "Inaktiv",
+  PENDING: "Ausstehend",
+  BLOCKED: "Gesperrt",
+}
 
 export const kycLabels: Record<KycStatus, string> = {
-  offen: "Offen",
-  eingereicht: "Eingereicht",
-  geprueft: "Geprüft",
-  abgelehnt: "Abgelehnt",
+  OPEN: "Offen",
+  SUBMITTED: "Eingereicht",
+  VERIFIED: "Geprüft",
+  REJECTED: "Abgelehnt",
 }
 
-export const productLabels: Record<ProductType, string> = {
-  festgeld: "Festgeld",
-  tagesgeld: "Tagesgeld",
-  stufenzins: "Stufenzins",
+export const accountStatusLabels: Record<AccountStatus, string> = {
+  PENDING: "Vorgemerkt",
+  ACTIVE: "Aktiv",
+  MATURED: "Fällig",
+  CLOSED: "Beendet",
+  CANCELLED: "Storniert",
 }
 
-export const interestPaymentLabels: Record<InterestPayment, string> = {
-  endfaellig: "Endfällig",
-  jaehrlich: "Jährlich",
-  quartalsweise: "Quartalsweise",
-  monatlich: "Monatlich",
+export const interestMethodLabels: Record<InterestMethod, string> = {
+  AT_MATURITY: "Endfällig",
+  ANNUAL: "Jährlich",
+  QUARTERLY: "Quartalsweise",
+  MONTHLY: "Monatlich",
 }
 
 export const documentCategoryLabels: Record<DocumentCategory, string> = {
-  identifikation: "Identifikation",
-  vertraege: "Verträge",
-  anlagebestaetigungen: "Anlagebestätigungen",
-  kontoauszuege: "Kontoauszüge",
-  kommunikation: "Kommunikation",
-  sonstige: "Sonstige",
+  IDENTIFICATION: "Identifikation",
+  CONTRACTS: "Verträge",
+  CONFIRMATIONS: "Anlagebestätigungen",
+  STATEMENTS: "Kontoauszüge",
+  CORRESPONDENCE: "Kommunikation",
+  OTHER: "Sonstige",
 }
 
 export const roleLabels: Record<Role, string> = {
-  admin: "Administrator",
-  mitarbeiter: "Mitarbeiter",
-  kunde: "Kunde",
+  ADMIN: "Administrator",
+  STAFF: "Mitarbeiter",
+  CUSTOMER: "Kunde",
 }
+
+export const customerStatusOptions = (Object.keys(customerStatusLabels) as CustomerStatus[]).map((value) => ({
+  value,
+  label: customerStatusLabels[value],
+}))
+
+export const kycStatusOptions = (Object.keys(kycLabels) as KycStatus[]).map((value) => ({
+  value,
+  label: kycLabels[value],
+}))
+
+export const accountStatusOptions = (Object.keys(accountStatusLabels) as AccountStatus[]).map((value) => ({
+  value,
+  label: accountStatusLabels[value],
+}))
+
+export const interestMethodOptions = (Object.keys(interestMethodLabels) as InterestMethod[]).map((value) => ({
+  value,
+  label: interestMethodLabels[value],
+}))
+
+export const documentCategoryOptions = (Object.keys(documentCategoryLabels) as DocumentCategory[]).map((value) => ({
+  value,
+  label: documentCategoryLabels[value],
+}))

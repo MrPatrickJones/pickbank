@@ -1,32 +1,31 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 
-import { Icon } from "@/components/admin/icons"
-import { Badge, Button } from "@/components/ui/primitives"
-import { Field, Select, TextInput, isDate, isEmail, parseAmount, parseRate } from "@/components/ui/form"
-import { FileDrop, Modal, useToast } from "@/components/ui/overlays"
-import { formatDate, formatEuro, formatFileSize, formatPercent } from "@/lib/format"
-import { addMonths } from "@/lib/finance"
 import { CredentialsModal } from "@/components/admin/access-card"
-import { useData, type PendingFile } from "@/lib/store"
-import { interestPaymentLabels, kycLabels, productLabels } from "@/lib/labels"
-import type { DocumentCategory, InterestPayment, KycStatus, ProductType } from "@/lib/types"
+import { Icon } from "@/components/admin/icons"
+import { Button } from "@/components/ui/primitives"
+import { Field, Select, TextInput } from "@/components/ui/form"
+import { Modal, useToast } from "@/components/ui/overlays"
+import { ApiRequestError, api } from "@/lib/api"
+import { formatAmount, formatDate, formatPercent, parseAmountInput } from "@/lib/format"
+import { accountStatusOptions, customerStatusOptions, interestMethodOptions, kycStatusOptions } from "@/lib/labels"
+import type { Customer } from "@/lib/types"
 
-const DRAFT_KEY = "ptb.portal.customer-draft.v1"
+const DRAFT_KEY = "ptb.customer-draft.v2"
 
 const steps = [
-  { id: 1, title: "Persönliche Daten" },
-  { id: 2, title: "Kontaktdaten" },
-  { id: 3, title: "Identifikation" },
-  { id: 4, title: "Anlage" },
-  { id: 5, title: "Dokumente" },
-  { id: 6, title: "Übersicht" },
+  { id: 1, title: "Kundendaten" },
+  { id: 2, title: "Kontakt" },
+  { id: 3, title: "Status & Zugang" },
+  { id: 4, title: "Festgeldkonto" },
+  { id: 5, title: "Übersicht" },
 ]
 
 type Draft = {
   firstName: string
   lastName: string
+  companyName: string
   dateOfBirth: string
   nationality: string
   address: string
@@ -36,27 +35,27 @@ type Draft = {
   email: string
   mobile: string
   phone: string
-  customerNumber: string
-  identificationType: string
+  customerStatus: string
   kycStatus: string
+  identificationType: string
   identifiedAt: string
-  createAccess: boolean
-  productType: ProductType
-  principal: string
+  createLogin: boolean
+  withAccount: boolean
+  productName: string
+  principalAmount: string
   currency: string
   interestRate: string
-  term: string
+  termMonths: string
   startDate: string
-  maturityDate: string
-  interestPayment: InterestPayment
-  payoutDate: string
+  status: string
+  interestPaymentMethod: string
   referenceAccount: string
-  notes: string
 }
 
-const emptyDraft = (customerNumber: string): Draft => ({
+const emptyDraft: Draft = {
   firstName: "",
   lastName: "",
+  companyName: "",
   dateOfBirth: "",
   nationality: "Deutschland",
   address: "",
@@ -66,30 +65,22 @@ const emptyDraft = (customerNumber: string): Draft => ({
   email: "",
   mobile: "",
   phone: "",
-  customerNumber,
+  customerStatus: "PENDING",
+  kycStatus: "OPEN",
   identificationType: "Personalausweis",
-  kycStatus: "offen",
   identifiedAt: "",
-  createAccess: true,
-  productType: "festgeld",
-  principal: "",
+  createLogin: true,
+  withAccount: true,
+  productName: "Festgeld",
+  principalAmount: "",
   currency: "EUR",
   interestRate: "3,25",
-  term: "12",
+  termMonths: "12",
   startDate: "",
-  maturityDate: "",
-  interestPayment: "endfaellig",
-  payoutDate: "",
+  status: "PENDING",
+  interestPaymentMethod: "AT_MATURITY",
   referenceAccount: "",
-  notes: "",
-})
-
-const documentCategories: { value: DocumentCategory; label: string }[] = [
-  { value: "identifikation", label: "Ausweisdokument" },
-  { value: "vertraege", label: "Vertrag" },
-  { value: "anlagebestaetigungen", label: "Anlagebestätigung" },
-  { value: "sonstige", label: "Sonstiges Dokument" },
-]
+}
 
 export function NewCustomerWizard({
   open,
@@ -98,30 +89,25 @@ export function NewCustomerWizard({
 }: {
   open: boolean
   onClose: () => void
-  onCreated: (customerId: string) => void
+  onCreated: (customerId: number) => void
 }) {
-  const { createCustomer, createAccount, nextCustomerNumber } = useData()
   const toast = useToast()
-
   const [step, setStep] = useState(1)
-  const [draft, setDraft] = useState<Draft>(() => emptyDraft(""))
-  const [files, setFiles] = useState<PendingFile[]>([])
+  const [draft, setDraft] = useState<Draft>(emptyDraft)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
   const [restored, setRestored] = useState(false)
-  const [credentials, setCredentials] = useState<{ email: string; password: string; name: string } | null>(null)
-  const pendingCustomerId = useRef<string | null>(null)
+  const [credentials, setCredentials] = useState<{ email: string; password: string; name: string; id: number } | null>(null)
 
-  // Restore an interrupted entry so nothing is lost on a reload.
+  // Nothing is lost if the browser reloads mid-entry.
   useEffect(() => {
     if (!open) return
-    const fallback = emptyDraft(nextCustomerNumber())
     try {
       const raw = window.localStorage.getItem(DRAFT_KEY)
       if (raw) {
-        const saved = JSON.parse(raw) as { draft: Draft; files: PendingFile[]; step: number }
+        const saved = JSON.parse(raw) as { draft: Draft; step: number }
         if (saved?.draft?.lastName || saved?.draft?.firstName) {
-          setDraft({ ...fallback, ...saved.draft })
-          setFiles(saved.files ?? [])
+          setDraft({ ...emptyDraft, ...saved.draft })
           setStep(saved.step ?? 1)
           setRestored(true)
           return
@@ -130,160 +116,137 @@ export function NewCustomerWizard({
     } catch {
       // ignore unreadable drafts
     }
-    setDraft(fallback)
-    setFiles([])
+    setDraft(emptyDraft)
     setStep(1)
     setRestored(false)
-  }, [open, nextCustomerNumber])
+  }, [open])
 
   useEffect(() => {
     if (!open) return
     try {
-      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ draft, files, step }))
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ draft, step }))
     } catch {
       // ignore
     }
-  }, [open, draft, files, step])
+  }, [open, draft, step])
 
-  const set = (key: keyof Draft, value: string) => {
-    setDraft((current) => {
-      const next = { ...current, [key]: value }
-      // Keep the maturity date in sync while the user has not touched it.
-      if ((key === "startDate" || key === "term") && next.startDate && next.term) {
-        const months = Number(next.term)
-        if (Number.isFinite(months) && months > 0 && isDate(next.startDate)) {
-          next.maturityDate = addMonths(next.startDate, months)
-          next.payoutDate = addMonths(next.startDate, months)
-        }
-      }
-      return next
-    })
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => {
+    setDraft((current) => ({ ...current, [key]: value }))
     setErrors((current) => {
-      if (!current[key]) return current
+      if (!current[key as string]) return current
       const next = { ...current }
-      delete next[key]
+      delete next[key as string]
       return next
     })
   }
 
-  const toggleAccess = (value: boolean) => setDraft((current) => ({ ...current, createAccess: value }))
-
-  const validateStep = (target: number) => {
+  const validate = (target: number) => {
     const found: Record<string, string> = {}
-
     if (target >= 1) {
       if (!draft.firstName.trim()) found.firstName = "Bitte geben Sie den Vornamen ein."
       if (!draft.lastName.trim()) found.lastName = "Bitte geben Sie den Nachnamen ein."
-      if (draft.dateOfBirth && !isDate(draft.dateOfBirth)) found.dateOfBirth = "Bitte geben Sie ein gültiges Geburtsdatum ein."
       if (!draft.city.trim()) found.city = "Bitte geben Sie den Ort ein."
+      if (!draft.country.trim()) found.country = "Bitte geben Sie das Land ein."
     }
     if (target >= 2) {
-      if (!isEmail(draft.email)) found.email = "Bitte geben Sie eine gültige E-Mail-Adresse ein."
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(draft.email)) {
+        found.email = "Bitte geben Sie eine gültige E-Mail-Adresse ein."
+      }
       if (!draft.mobile.trim() && !draft.phone.trim()) found.mobile = "Bitte hinterlegen Sie mindestens eine Rufnummer."
     }
-    if (target >= 3) {
-      if (!draft.customerNumber.trim()) found.customerNumber = "Bitte geben Sie eine Kundennummer ein."
-      if (draft.identifiedAt && !isDate(draft.identifiedAt)) found.identifiedAt = "Bitte geben Sie ein gültiges Datum ein."
-    }
-    if (target >= 4 && draft.principal.trim()) {
-      const principal = parseAmount(draft.principal)
-      const rate = parseRate(draft.interestRate)
-      const term = Number(draft.term)
-      if (!Number.isFinite(principal) || principal <= 0) found.principal = "Bitte geben Sie einen gültigen Anlagebetrag ein."
-      if (!Number.isFinite(rate) || rate < 0 || rate > 25) found.interestRate = "Bitte geben Sie einen gültigen Zinssatz ein."
-      if (!Number.isFinite(term) || term <= 0) found.term = "Bitte geben Sie eine gültige Laufzeit ein."
-      if (!isDate(draft.startDate)) found.startDate = "Bitte geben Sie ein gültiges Startdatum ein."
-      if (!isDate(draft.maturityDate)) found.maturityDate = "Bitte geben Sie ein gültiges Enddatum ein."
-      if (isDate(draft.startDate) && isDate(draft.maturityDate) && draft.maturityDate <= draft.startDate) {
-        found.maturityDate = "Das Enddatum muss nach dem Startdatum liegen."
-      }
+    if (target >= 4 && draft.withAccount) {
+      const amount = Number(parseAmountInput(draft.principalAmount || "0"))
+      const rate = Number(draft.interestRate.replace(",", "."))
+      if (!Number.isFinite(amount) || amount <= 0) found.principalAmount = "Bitte geben Sie einen gültigen Anlagebetrag ein."
+      if (!Number.isFinite(rate) || rate < 0 || rate > 25) found.interestRate = "Der Zinssatz muss zwischen 0 % und 25 % liegen."
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.startDate)) found.startDate = "Bitte geben Sie ein gültiges Startdatum ein."
       if (!draft.referenceAccount.trim()) found.referenceAccount = "Bitte geben Sie das Referenzkonto an."
     }
-
     setErrors(found)
     return Object.keys(found).length === 0
   }
 
-  const goNext = () => {
-    if (!validateStep(step)) return
-    setStep((current) => Math.min(6, current + 1))
-  }
-
-  const summary = useMemo(() => {
-    const principal = parseAmount(draft.principal)
-    const rate = parseRate(draft.interestRate)
-    return {
-      hasInvestment: draft.principal.trim().length > 0 && Number.isFinite(principal) && principal > 0,
-      principal,
-      rate,
-    }
-  }, [draft.principal, draft.interestRate])
-
   const submit = async () => {
-    for (const target of [1, 2, 3, 4]) {
-      if (!validateStep(target)) {
+    for (const target of [1, 2, 4]) {
+      if (!validate(target)) {
         setStep(target)
         return
       }
     }
 
-    const customer = createCustomer(
-      {
-        firstName: draft.firstName.trim(),
-        lastName: draft.lastName.trim(),
-        dateOfBirth: draft.dateOfBirth,
-        nationality: draft.nationality,
-        address: draft.address.trim(),
-        postalCode: draft.postalCode.trim(),
-        city: draft.city.trim(),
-        country: draft.country,
-        email: draft.email.trim(),
-        phone: draft.phone.trim(),
-        mobile: draft.mobile.trim(),
-        status: draft.kycStatus === "geprueft" ? "aktiv" : "pruefung",
-        kycStatus: draft.kycStatus as KycStatus,
-        identifiedAt: draft.identifiedAt,
-        identificationType: draft.identificationType,
-        customerNumber: draft.customerNumber.trim(),
-      },
-      summary.hasInvestment
-        ? {
-            productType: draft.productType,
-            principal: summary.principal,
-            interestRate: summary.rate,
-            term: Number(draft.term),
-            startDate: draft.startDate,
-            maturityDate: draft.maturityDate,
-            interestPayment: draft.interestPayment,
-            payoutDate: draft.payoutDate || draft.maturityDate,
-            status: "aktiv",
-            referenceAccount: draft.referenceAccount.trim(),
-            notes: draft.notes.trim(),
-          }
-        : undefined,
-      files,
-    )
-
+    setBusy(true)
     try {
-      window.localStorage.removeItem(DRAFT_KEY)
-    } catch {
-      // ignore
+      const created = await api.post<{ customer: Customer; login: { email: string; password: string } | null }>(
+        "/api/customers",
+        {
+          firstName: draft.firstName.trim(),
+          lastName: draft.lastName.trim(),
+          companyName: draft.companyName || null,
+          email: draft.email.trim(),
+          phone: draft.phone || null,
+          mobile: draft.mobile || null,
+          dateOfBirth: draft.dateOfBirth || null,
+          address: draft.address || null,
+          postalCode: draft.postalCode || null,
+          city: draft.city.trim(),
+          country: draft.country.trim(),
+          nationality: draft.nationality || null,
+          customerStatus: draft.customerStatus,
+          kycStatus: draft.kycStatus,
+          identifiedAt: draft.identifiedAt || null,
+          identificationType: draft.identificationType || null,
+          createLogin: draft.createLogin,
+        },
+      )
+
+      if (draft.withAccount) {
+        await api.post(`/api/customers/${created.customer.id}/accounts`, {
+          productName: draft.productName,
+          principalAmount: parseAmountInput(draft.principalAmount),
+          currency: draft.currency,
+          interestRate: draft.interestRate.replace(",", "."),
+          termMonths: Number(draft.termMonths),
+          startDate: draft.startDate,
+          status: draft.status,
+          interestPaymentMethod: draft.interestPaymentMethod,
+          referenceAccount: draft.referenceAccount,
+        })
+      }
+
+      try {
+        window.localStorage.removeItem(DRAFT_KEY)
+      } catch {
+        // ignore
+      }
+
+      toast("Kunde wurde erfolgreich angelegt.")
+
+      if (created.login) {
+        setCredentials({
+          email: created.login.email,
+          password: created.login.password,
+          name: `${created.customer.firstName} ${created.customer.lastName}`,
+          id: created.customer.id,
+        })
+        return
+      }
+
+      onCreated(created.customer.id)
+    } catch (caught) {
+      if (caught instanceof ApiRequestError) {
+        if (Object.keys(caught.details).length) {
+          setErrors(caught.details)
+          if (caught.details.email) setStep(2)
+          else if (caught.details.principalAmount || caught.details.interestRate || caught.details.startDate) setStep(4)
+        } else {
+          setErrors({ form: caught.message })
+        }
+      } else {
+        setErrors({ form: "Der Kunde konnte nicht angelegt werden." })
+      }
+    } finally {
+      setBusy(false)
     }
-
-    toast("Kunde wurde erfolgreich angelegt.")
-
-    if (draft.createAccess) {
-      const password = await createAccount(customer.id, draft.email.trim())
-      setCredentials({
-        email: draft.email.trim().toLowerCase(),
-        password,
-        name: `${draft.firstName} ${draft.lastName}`.trim(),
-      })
-      pendingCustomerId.current = customer.id
-      return
-    }
-
-    onCreated(customer.id)
   }
 
   return (
@@ -291,7 +254,7 @@ export function NewCustomerWizard({
       open={open}
       size="lg"
       title="Neuen Kunden anlegen"
-      subtitle={`Schritt ${step} von 6 · ${steps[step - 1].title}`}
+      subtitle={`Schritt ${step} von 5 · ${steps[step - 1].title}`}
       onClose={onClose}
       footer={
         <>
@@ -304,13 +267,18 @@ export function NewCustomerWizard({
           <Button variant="ghost" onClick={onClose}>
             Abbrechen
           </Button>
-          {step < 6 ? (
-            <Button variant="primary" onClick={goNext}>
+          {step < 5 ? (
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (validate(step)) setStep((current) => Math.min(5, current + 1))
+              }}
+            >
               Weiter
             </Button>
           ) : (
-            <Button variant="primary" onClick={() => void submit()}>
-              Kunde erstellen
+            <Button variant="primary" disabled={busy} onClick={() => void submit()}>
+              {busy ? "Wird gespeichert …" : "Kunde erstellen"}
             </Button>
           )}
         </>
@@ -321,13 +289,11 @@ export function NewCustomerWizard({
           <li key={entry.id}>
             <button
               type="button"
-              onClick={() => (entry.id < step ? setStep(entry.id) : goNext())}
+              onClick={() => (entry.id < step ? setStep(entry.id) : validate(step) && setStep(Math.min(entry.id, step + 1)))}
               className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12.5px] font-semibold transition-colors ${
                 entry.id === step
                   ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                  : entry.id < step
-                    ? "border-[var(--line)] bg-white text-[var(--body)]"
-                    : "border-[var(--line)] bg-white text-[var(--faint)]"
+                  : "border-[var(--line)] bg-white text-[var(--body)]"
               }`}
             >
               <span className="num">{entry.id}</span>
@@ -343,6 +309,12 @@ export function NewCustomerWizard({
         </p>
       )}
 
+      {errors.form && (
+        <p role="alert" className="mb-4 rounded-lg bg-[var(--danger-soft)] px-4 py-3 text-[13px] font-medium text-[var(--danger)]">
+          {errors.form}
+        </p>
+      )}
+
       {step === 1 && (
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Vorname" required error={errors.firstName}>
@@ -351,8 +323,11 @@ export function NewCustomerWizard({
           <Field label="Nachname" required error={errors.lastName}>
             <TextInput value={draft.lastName} invalid={Boolean(errors.lastName)} onChange={(event) => set("lastName", event.target.value)} />
           </Field>
-          <Field label="Geburtsdatum" error={errors.dateOfBirth}>
-            <TextInput type="date" value={draft.dateOfBirth} invalid={Boolean(errors.dateOfBirth)} onChange={(event) => set("dateOfBirth", event.target.value)} />
+          <Field label="Firma (optional)">
+            <TextInput value={draft.companyName} onChange={(event) => set("companyName", event.target.value)} />
+          </Field>
+          <Field label="Geburtsdatum">
+            <TextInput type="date" value={draft.dateOfBirth} onChange={(event) => set("dateOfBirth", event.target.value)} />
           </Field>
           <Field label="Nationalität">
             <TextInput value={draft.nationality} onChange={(event) => set("nationality", event.target.value)} />
@@ -366,15 +341,15 @@ export function NewCustomerWizard({
           <Field label="Ort" required error={errors.city}>
             <TextInput value={draft.city} invalid={Boolean(errors.city)} onChange={(event) => set("city", event.target.value)} />
           </Field>
-          <Field label="Land">
-            <TextInput value={draft.country} onChange={(event) => set("country", event.target.value)} />
+          <Field label="Land" required error={errors.country}>
+            <TextInput value={draft.country} invalid={Boolean(errors.country)} onChange={(event) => set("country", event.target.value)} />
           </Field>
         </div>
       )}
 
       {step === 2 && (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="E-Mail" required error={errors.email} className="sm:col-span-2">
+          <Field label="E-Mail" required error={errors.email} className="sm:col-span-2" hint="Zugleich Benutzername des Kundenzugangs">
             <TextInput type="email" value={draft.email} invalid={Boolean(errors.email)} onChange={(event) => set("email", event.target.value)} />
           </Field>
           <Field label="Mobiltelefon" required error={errors.mobile}>
@@ -388,39 +363,47 @@ export function NewCustomerWizard({
 
       {step === 3 && (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Kundennummer" required error={errors.customerNumber} hint="Vorschlag aus der laufenden Nummernkreis-Vergabe">
-            <TextInput value={draft.customerNumber} invalid={Boolean(errors.customerNumber)} onChange={(event) => set("customerNumber", event.target.value)} />
+          <Field label="Kundenstatus">
+            <Select value={draft.customerStatus} onChange={(event) => set("customerStatus", event.target.value)}>
+              {customerStatusOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
           </Field>
-          <Field label="Ausweis-/Identifikationsart">
+          <Field label="KYC-Status">
+            <Select value={draft.kycStatus} onChange={(event) => set("kycStatus", event.target.value)}>
+              {kycStatusOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Ausweisart">
             <Select value={draft.identificationType} onChange={(event) => set("identificationType", event.target.value)}>
               <option>Personalausweis</option>
               <option>Reisepass</option>
               <option>Aufenthaltstitel</option>
             </Select>
           </Field>
-          <Field label="KYC-Status">
-            <Select value={draft.kycStatus} onChange={(event) => set("kycStatus", event.target.value)}>
-              <option value="offen">Offen</option>
-              <option value="eingereicht">Eingereicht</option>
-              <option value="geprueft">Geprüft</option>
-            </Select>
-          </Field>
-          <Field label="Identifikationsdatum" error={errors.identifiedAt}>
-            <TextInput type="date" value={draft.identifiedAt} invalid={Boolean(errors.identifiedAt)} onChange={(event) => set("identifiedAt", event.target.value)} />
+          <Field label="Identifikationsdatum">
+            <TextInput type="date" value={draft.identifiedAt} onChange={(event) => set("identifiedAt", event.target.value)} />
           </Field>
 
           <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-sunken)] px-4 py-3.5">
             <input
               type="checkbox"
-              checked={draft.createAccess}
-              onChange={(event) => toggleAccess(event.target.checked)}
+              checked={draft.createLogin}
+              onChange={(event) => set("createLogin", event.target.checked)}
               className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
             />
             <span>
               <span className="block text-[13.5px] font-semibold text-[var(--ink)]">Kundenzugang anlegen</span>
               <span className="block text-[12.5px] leading-relaxed text-[var(--muted)]">
-                Erstellt einen Login mit der E-Mail-Adresse des Kunden. Das Passwort wird nach dem Speichern einmalig
-                angezeigt. Der Kunde kann seine Daten nur einsehen.
+                Erstellt den Login mit der E-Mail-Adresse des Kunden. Das Passwort erzeugt der Server und zeigt es nach
+                dem Speichern einmalig an. Der Kunde kann seine Daten nur einsehen.
               </span>
             </span>
           </label>
@@ -429,120 +412,91 @@ export function NewCustomerWizard({
 
       {step === 4 && (
         <div className="grid gap-4 sm:grid-cols-2">
-          <p className="sm:col-span-2 text-[13px] text-[var(--muted)]">
-            Optional: Lassen Sie den Anlagebetrag leer, um den Kunden ohne Anlage anzulegen.
-          </p>
-          <Field label="Anlageart">
-            <Select value={draft.productType} onChange={(event) => set("productType", event.target.value)}>
-              <option value="festgeld">Festgeld</option>
-              <option value="tagesgeld">Tagesgeld</option>
-              <option value="stufenzins">Stufenzins</option>
-            </Select>
-          </Field>
-          <Field label="Anlagebetrag" error={errors.principal} hint="Eingabe in Euro, z. B. 100.000">
-            <TextInput value={draft.principal} inputMode="decimal" invalid={Boolean(errors.principal)} onChange={(event) => set("principal", event.target.value)} />
-          </Field>
-          <Field label="Währung">
-            <Select value={draft.currency} onChange={(event) => set("currency", event.target.value)}>
-              <option value="EUR">EUR</option>
-            </Select>
-          </Field>
-          <Field label="Zinssatz (% p. a.)" error={errors.interestRate}>
-            <TextInput value={draft.interestRate} inputMode="decimal" invalid={Boolean(errors.interestRate)} onChange={(event) => set("interestRate", event.target.value)} />
-          </Field>
-          <Field label="Laufzeit (Monate)" error={errors.term}>
-            <Select value={draft.term} invalid={Boolean(errors.term)} onChange={(event) => set("term", event.target.value)}>
-              {[3, 6, 12, 18, 24, 36, 48, 60].map((months) => (
-                <option key={months} value={String(months)}>
-                  {months} Monate
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Startdatum" error={errors.startDate}>
-            <TextInput type="date" value={draft.startDate} invalid={Boolean(errors.startDate)} onChange={(event) => set("startDate", event.target.value)} />
-          </Field>
-          <Field label="Enddatum" error={errors.maturityDate} hint="Wird aus Start und Laufzeit vorbelegt">
-            <TextInput type="date" value={draft.maturityDate} invalid={Boolean(errors.maturityDate)} onChange={(event) => set("maturityDate", event.target.value)} />
-          </Field>
-          <Field label="Zinszahlung">
-            <Select value={draft.interestPayment} onChange={(event) => set("interestPayment", event.target.value)}>
-              <option value="endfaellig">Endfällig</option>
-              <option value="jaehrlich">Jährlich</option>
-              <option value="quartalsweise">Quartalsweise</option>
-              <option value="monatlich">Monatlich</option>
-            </Select>
-          </Field>
-          <Field label="Auszahlungsdatum">
-            <TextInput type="date" value={draft.payoutDate} onChange={(event) => set("payoutDate", event.target.value)} />
-          </Field>
-          <Field label="Referenzkonto (IBAN)" error={errors.referenceAccount} className="sm:col-span-2">
-            <TextInput value={draft.referenceAccount} invalid={Boolean(errors.referenceAccount)} onChange={(event) => set("referenceAccount", event.target.value)} />
-          </Field>
+          <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-sunken)] px-4 py-3.5">
+            <input
+              type="checkbox"
+              checked={draft.withAccount}
+              onChange={(event) => set("withAccount", event.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+            />
+            <span>
+              <span className="block text-[13.5px] font-semibold text-[var(--ink)]">Festgeldkonto direkt anlegen</span>
+              <span className="block text-[12.5px] text-[var(--muted)]">Fälligkeit berechnet der Server aus Startdatum und Laufzeit.</span>
+            </span>
+          </label>
+
+          {draft.withAccount && (
+            <>
+              <Field label="Produktname">
+                <TextInput value={draft.productName} onChange={(event) => set("productName", event.target.value)} />
+              </Field>
+              <Field label="Status">
+                <Select value={draft.status} onChange={(event) => set("status", event.target.value)}>
+                  {accountStatusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Anlagebetrag" required error={errors.principalAmount}>
+                <TextInput value={draft.principalAmount} inputMode="decimal" invalid={Boolean(errors.principalAmount)} onChange={(event) => set("principalAmount", event.target.value)} />
+              </Field>
+              <Field label="Währung">
+                <Select value={draft.currency} onChange={(event) => set("currency", event.target.value)}>
+                  {["EUR", "CHF", "USD", "GBP"].map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Zinssatz (% p. a.)" required error={errors.interestRate}>
+                <TextInput value={draft.interestRate} inputMode="decimal" invalid={Boolean(errors.interestRate)} onChange={(event) => set("interestRate", event.target.value)} />
+              </Field>
+              <Field label="Laufzeit (Monate)" required>
+                <Select value={draft.termMonths} onChange={(event) => set("termMonths", event.target.value)}>
+                  {[3, 6, 12, 18, 24, 36, 48, 60].map((months) => (
+                    <option key={months} value={String(months)}>
+                      {months} Monate
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Startdatum" required error={errors.startDate}>
+                <TextInput type="date" value={draft.startDate} invalid={Boolean(errors.startDate)} onChange={(event) => set("startDate", event.target.value)} />
+              </Field>
+              <Field label="Zinszahlung">
+                <Select value={draft.interestPaymentMethod} onChange={(event) => set("interestPaymentMethod", event.target.value)}>
+                  {interestMethodOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Referenzkonto (IBAN)" required error={errors.referenceAccount} className="sm:col-span-2">
+                <TextInput value={draft.referenceAccount} invalid={Boolean(errors.referenceAccount)} onChange={(event) => set("referenceAccount", event.target.value)} />
+              </Field>
+            </>
+          )}
         </div>
       )}
 
       {step === 5 && (
         <div className="space-y-4">
-          <FileDrop
-            onFiles={(incoming) =>
-              setFiles((current) => [
-                ...current,
-                ...incoming.map((file) => ({ ...file, category: "sonstige" as DocumentCategory })),
-              ])
-            }
-          />
-          {files.length === 0 ? (
-            <p className="text-[13px] text-[var(--muted)]">
-              Noch keine Dokumente ausgewählt. Ausweisdokument, Vertrag und Anlagebestätigung können auch später ergänzt werden.
-            </p>
-          ) : (
-            <ul className="divide-y divide-[var(--line-soft)] rounded-xl border border-[var(--line)]">
-              {files.map((file, index) => (
-                <li key={`${file.filename}-${index}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                  <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-[var(--ink)]">{file.filename}</span>
-                  <span className="num text-[12.5px] text-[var(--faint)]">{formatFileSize(file.sizeKb)}</span>
-                  <Select
-                    value={file.category}
-                    className="h-9 w-[190px]"
-                    onChange={(event) =>
-                      setFiles((current) =>
-                        current.map((entry, entryIndex) =>
-                          entryIndex === index ? { ...entry, category: event.target.value as DocumentCategory } : entry,
-                        ),
-                      )
-                    }
-                  >
-                    {documentCategories.map((category) => (
-                      <option key={category.value} value={category.value}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </Select>
-                  <Button size="sm" variant="ghost" onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}>
-                    Entfernen
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {step === 6 && (
-        <div className="space-y-5">
           <SummaryBlock
-            title="Persönliche Daten"
+            title="Kundendaten"
             onEdit={() => setStep(1)}
             rows={[
               ["Name", `${draft.firstName} ${draft.lastName}`],
+              ["Firma", draft.companyName || "–"],
               ["Geburtsdatum", draft.dateOfBirth ? formatDate(draft.dateOfBirth) : "–"],
-              ["Nationalität", draft.nationality],
               ["Adresse", [draft.address, `${draft.postalCode} ${draft.city}`.trim(), draft.country].filter(Boolean).join(", ")],
             ]}
           />
           <SummaryBlock
-            title="Kontaktdaten"
+            title="Kontakt"
             onEdit={() => setStep(2)}
             rows={[
               ["E-Mail", draft.email],
@@ -551,42 +505,30 @@ export function NewCustomerWizard({
             ]}
           />
           <SummaryBlock
-            title="Identifikation"
+            title="Status & Zugang"
             onEdit={() => setStep(3)}
             rows={[
-              ["Kundennummer", draft.customerNumber],
-              ["Ausweisart", draft.identificationType],
-              ["KYC-Status", kycLabels[draft.kycStatus as KycStatus]],
-              ["Identifiziert am", draft.identifiedAt ? formatDate(draft.identifiedAt) : "–"],
-              ["Kundenzugang", draft.createAccess ? `wird angelegt für ${draft.email || "–"}` : "wird nicht angelegt"],
+              ["Kundenstatus", draft.customerStatus],
+              ["KYC-Status", draft.kycStatus],
+              ["Kundenzugang", draft.createLogin ? `wird angelegt für ${draft.email || "–"}` : "wird nicht angelegt"],
             ]}
           />
           <SummaryBlock
-            title="Anlage"
+            title="Festgeldkonto"
             onEdit={() => setStep(4)}
             rows={
-              summary.hasInvestment
+              draft.withAccount
                 ? [
-                    ["Anlageart", productLabels[draft.productType]],
-                    ["Betrag", formatEuro(summary.principal)],
-                    ["Zinssatz", formatPercent(summary.rate)],
-                    ["Laufzeit", `${draft.term} Monate`],
-                    ["Zeitraum", `${formatDate(draft.startDate)} – ${formatDate(draft.maturityDate)}`],
-                    ["Zinszahlung", interestPaymentLabels[draft.interestPayment]],
-                    ["Referenzkonto", draft.referenceAccount],
+                    ["Produkt", draft.productName],
+                    ["Betrag", formatAmount(parseAmountInput(draft.principalAmount || "0"), draft.currency)],
+                    ["Zinssatz", formatPercent(draft.interestRate.replace(",", "."))],
+                    ["Laufzeit", `${draft.termMonths} Monate`],
+                    ["Start", draft.startDate ? formatDate(draft.startDate) : "–"],
+                    ["Referenzkonto", draft.referenceAccount || "–"],
                   ]
-                : [["Anlage", "Keine Anlage erfasst"]]
+                : [["Konto", "Kein Konto erfasst"]]
             }
           />
-          <SummaryBlock
-            title="Dokumente"
-            onEdit={() => setStep(5)}
-            rows={files.length ? files.map((file) => [file.filename, formatFileSize(file.sizeKb)]) : [["Dokumente", "Keine Dokumente"]]}
-          />
-          <p className="flex items-center gap-2 text-[13px] text-[var(--muted)]">
-            <Badge tone="info">Prüfen</Badge>
-            Nach dem Erstellen wird der Vorgang im Aktivitätsprotokoll festgehalten.
-          </p>
         </div>
       )}
 
@@ -596,9 +538,8 @@ export function NewCustomerWizard({
         password={credentials?.password ?? ""}
         customerName={credentials?.name ?? ""}
         onClose={() => {
+          const id = credentials?.id
           setCredentials(null)
-          const id = pendingCustomerId.current
-          pendingCustomerId.current = null
           if (id) onCreated(id)
         }}
       />
@@ -612,7 +553,7 @@ function SummaryBlock({
   onEdit,
 }: {
   title: string
-  rows: (string[] | [string, string])[]
+  rows: [string, string][]
   onEdit: () => void
 }) {
   return (

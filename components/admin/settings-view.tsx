@@ -3,23 +3,37 @@
 import { useState } from "react"
 
 import { Icon } from "@/components/admin/icons"
-import { Badge, Button, Card, PageHeader, Table, cell, cellStrong, rowClass } from "@/components/ui/primitives"
-import { ConfirmDialog, useToast } from "@/components/ui/overlays"
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  Table,
+  cell,
+  cellStrong,
+  rowClass,
+} from "@/components/ui/primitives"
+import { Field, TextInput } from "@/components/ui/form"
+import { Modal, useToast } from "@/components/ui/overlays"
+import { ApiRequestError, api } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
-import { IDLE_TIMEOUT_MINUTES, roleLabel, staffAccounts, useSession } from "@/lib/session"
-import { useData } from "@/lib/store"
+import { roleLabels } from "@/lib/labels"
+import { useSession } from "@/lib/session"
+import { useResource } from "@/lib/use-resource"
+import type { DashboardData } from "@/lib/types"
 
 const permissionMatrix = [
-  { label: "Kundenzugang anlegen, sperren, Passwort neu vergeben", admin: true, mitarbeiter: true, kunde: false },
-  { label: "Eigenes Passwort ändern", admin: true, mitarbeiter: true, kunde: true },
-  { label: "Kunden ansehen", admin: true, mitarbeiter: true, kunde: "nur eigene" },
-  { label: "Kunden anlegen und bearbeiten", admin: true, mitarbeiter: true, kunde: false },
-  { label: "Kunden deaktivieren", admin: true, mitarbeiter: false, kunde: false },
-  { label: "Anlagen anlegen und bearbeiten", admin: true, mitarbeiter: true, kunde: false },
-  { label: "Dokumente hochladen und löschen", admin: true, mitarbeiter: true, kunde: "nur ansehen" },
-  { label: "Nachrichten versenden", admin: true, mitarbeiter: true, kunde: false },
-  { label: "Aktivitätsprotokoll einsehen", admin: true, mitarbeiter: true, kunde: false },
-  { label: "Einstellungen und Benutzerverwaltung", admin: true, mitarbeiter: false, kunde: false },
+  { label: "Kunden ansehen", admin: true, staff: true, customer: "nur eigene" },
+  { label: "Kunden anlegen und bearbeiten", admin: true, staff: true, customer: false },
+  { label: "Kunden löschen", admin: true, staff: false, customer: false },
+  { label: "Festgeldkonten anlegen und bearbeiten", admin: true, staff: true, customer: false },
+  { label: "Dokumente hinterlegen und löschen", admin: true, staff: true, customer: "nur ansehen" },
+  { label: "Nachrichten versenden", admin: true, staff: true, customer: false },
+  { label: "Kundenzugänge vergeben und sperren", admin: true, staff: true, customer: false },
+  { label: "Aktivitätsprotokoll einsehen", admin: true, staff: true, customer: false },
+  { label: "Eigenes Passwort ändern", admin: true, staff: true, customer: true },
 ]
 
 function Mark({ value }: { value: boolean | string }) {
@@ -29,23 +43,24 @@ function Mark({ value }: { value: boolean | string }) {
 }
 
 export function SettingsView() {
-  const { user, can } = useSession()
-  const { resetDemoData, customers, investments, documents, activities, accounts } = useData()
+  const { user } = useSession()
   const toast = useToast()
-  const [confirmReset, setConfirmReset] = useState(false)
+  const [passwordOpen, setPasswordOpen] = useState(false)
+
+  const { data, loading, error, reload } = useResource<DashboardData>(() => api.get<DashboardData>("/api/dashboard"))
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Einstellungen" subtitle="Rollen, Sitzungen und Demodaten des Portals." />
+      <PageHeader title="Einstellungen" subtitle="Konto, Rollen und Sicherheit des Portals." />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card title="Angemeldeter Benutzer">
           <dl className="divide-y divide-[var(--line-soft)]">
             {[
-              ["Name", user?.name ?? "–"],
+              ["Name", user?.fullName ?? "–"],
               ["E-Mail", user?.email ?? "–"],
-              ["Rolle", user ? roleLabel[user.role] : "–"],
-              ["Automatische Abmeldung", `nach ${IDLE_TIMEOUT_MINUTES} Minuten Inaktivität`],
+              ["Rolle", user ? roleLabels[user.role] : "–"],
+              ["Automatische Abmeldung", "nach 15 Minuten Inaktivität"],
             ].map(([label, value]) => (
               <div key={label} className="flex items-baseline justify-between gap-3 px-5 py-3">
                 <dt className="text-[13px] text-[var(--muted)]">{label}</dt>
@@ -53,35 +68,37 @@ export function SettingsView() {
               </div>
             ))}
           </dl>
+          <div className="border-t border-[var(--line-soft)] px-5 py-4">
+            <Button size="sm" onClick={() => setPasswordOpen(true)}>
+              Passwort ändern
+            </Button>
+          </div>
         </Card>
 
-        <Card title="Datenbestand" subtitle="Demodaten dieses Prototyps">
-          <dl className="divide-y divide-[var(--line-soft)]">
-            {[
-              ["Kunden", customers.length],
-              ["Anlagen", investments.length],
-              ["Dokumente", documents.length],
-              ["Aktivitäten", activities.length],
-              ["Kundenzugänge", accounts.length],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="flex items-baseline justify-between gap-3 px-5 py-3">
-                <dt className="text-[13px] text-[var(--muted)]">{label}</dt>
-                <dd className="num text-[13.5px] font-medium text-[var(--ink)]">{value}</dd>
-              </div>
-            ))}
-          </dl>
-          {can("settings.manage") && (
-            <div className="flex items-center justify-between gap-3 border-t border-[var(--line-soft)] px-5 py-4">
-              <p className="text-[13px] text-[var(--muted)]">Alle Änderungen verwerfen und Demodaten neu laden.</p>
-              <Button variant="danger" size="sm" onClick={() => setConfirmReset(true)}>
-                Zurücksetzen
-              </Button>
-            </div>
+        <Card title="Datenbestand">
+          {loading && !data && <LoadingState />}
+          {error && <ErrorState message={error} onRetry={reload} />}
+          {data && (
+            <dl className="divide-y divide-[var(--line-soft)]">
+              {[
+                ["Kunden", data.summary.customers.total],
+                ["Aktive Kunden", data.summary.customers.active],
+                ["Ausstehende Kunden", data.summary.customers.pending],
+                ["Festgeldkonten", data.summary.accounts.total],
+                ["Aktive Konten", data.summary.accounts.active],
+                ["Überfällige Konten", data.summary.accounts.overdue],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="flex items-baseline justify-between gap-3 px-5 py-3">
+                  <dt className="text-[13px] text-[var(--muted)]">{label}</dt>
+                  <dd className="num text-[13.5px] font-medium text-[var(--ink)]">{value}</dd>
+                </div>
+              ))}
+            </dl>
           )}
         </Card>
       </div>
 
-      <Card title="Rollen und Rechte" subtitle="Welche Rolle welche Aktion ausführen darf">
+      <Card title="Rollen und Rechte" subtitle="Serverseitig durchgesetzt – die Oberfläche spiegelt sie nur wider">
         <Table minWidth={720} headers={["Berechtigung", "Administrator", "Mitarbeiter", "Kunde"]}>
           {permissionMatrix.map((row) => (
             <tr key={row.label} className={rowClass}>
@@ -90,97 +107,113 @@ export function SettingsView() {
                 <Mark value={row.admin} />
               </td>
               <td className={cell}>
-                <Mark value={row.mitarbeiter} />
+                <Mark value={row.staff} />
               </td>
               <td className={cell}>
-                <Mark value={row.kunde} />
+                <Mark value={row.customer} />
               </td>
             </tr>
           ))}
         </Table>
       </Card>
 
-      <Card
-        title="Kundenzugänge"
-        subtitle="Logins für das Kundenportal – angelegt und verwaltet von Pick The Bank"
-      >
-        {accounts.length === 0 ? (
-          <p className="px-5 py-8 text-center text-[13.5px] text-[var(--muted)]">
-            Noch keine Kundenzugänge vergeben. Zugänge legen Sie in der jeweiligen Kundenakte an.
-          </p>
-        ) : (
-          <Table minWidth={780} headers={["Kunde", "Benutzername", "Status", "Angelegt von", "Letzte Anmeldung"]}>
-            {accounts.map((account) => {
-              const customer = customers.find((entry) => entry.id === account.customerId)
-              return (
-                <tr key={account.id} className={rowClass}>
-                  <td className={cellStrong}>
-                    {customer ? `${customer.firstName} ${customer.lastName}` : "–"}
-                    <div className="num text-[12px] font-normal text-[var(--faint)]">{customer?.customerNumber}</div>
-                  </td>
-                  <td className={cell}>{account.loginEmail}</td>
-                  <td className={cell}>
-                    <Badge tone={account.status === "aktiv" ? "good" : "danger"}>
-                      {account.status === "aktiv" ? "Aktiv" : "Gesperrt"}
-                    </Badge>
-                    {account.mustChangePassword && (
-                      <span className="ml-2 text-[12px] text-[var(--warn)]">Startpasswort</span>
-                    )}
-                  </td>
-                  <td className={cell}>{account.createdBy}</td>
-                  <td className={`${cell} num`}>
-                    {account.lastLoginAt ? formatDateTime(account.lastLoginAt) : "noch nie"}
-                  </td>
-                </tr>
-              )
-            })}
-          </Table>
-        )}
-      </Card>
-
-      <Card title="Mitarbeiterzugänge" subtitle="Interne Benutzer dieses Prototyps">
-        <Table minWidth={640} headers={["Benutzer", "E-Mail", "Rolle", "Zugriff"]}>
-          {staffAccounts.map((account) => (
-            <tr key={account.email} className={rowClass}>
-              <td className={cellStrong}>{account.name}</td>
-              <td className={cell}>{account.email}</td>
-              <td className={cell}>
-                <Badge tone={account.role === "admin" ? "info" : account.role === "mitarbeiter" ? "neutral" : "good"}>
-                  {roleLabel[account.role]}
-                </Badge>
-              </td>
-              <td className={cell}>{account.hint}</td>
-            </tr>
-          ))}
-        </Table>
-      </Card>
-
-      <Card title="Sicherheitshinweise" subtitle="Was dieser Prototyp leistet – und was der Produktivbetrieb braucht">
+      <Card title="Sicherheit" subtitle="Wie das Portal Kundendaten schützt">
         <ul className="space-y-2.5 px-5 py-5 text-[13.5px] leading-relaxed text-[var(--body)]">
-          <li>• Rollen und Rechte werden in der Oberfläche durchgesetzt; im Produktivbetrieb muss dies serverseitig erfolgen.</li>
-          <li>• Kundendaten stehen in keiner URL – die Navigation läuft vollständig über den Anwendungszustand.</li>
-          <li>• Jede Änderung wird mit Benutzer, Zeitpunkt, altem und neuem Wert protokolliert.</li>
-          <li>• Kritische Änderungen verlangen eine Bestätigung, Formulare werden vor dem Speichern validiert.</li>
-          <li>• Die Sitzung endet automatisch nach {IDLE_TIMEOUT_MINUTES} Minuten ohne Aktivität.</li>
-          <li>• Kundenzugänge vergibt ausschließlich Pick The Bank; Kunden haben reinen Lesezugriff auf die eigenen Daten.</li>
-          <li>• Passwörter werden nie gespeichert – nur ein SHA-256-Hash mit Zufallssalz; das Startpasswort ist einmalig sichtbar.</li>
-          <li>• Daten liegen ausschließlich im Browser dieses Prototyps; es werden keine echten Kundendaten verarbeitet.</li>
+          <li>• Jede Anfrage wird serverseitig autorisiert; Kunden erreichen ausschließlich ihre eigenen Datensätze.</li>
+          <li>• Passwörter werden mit scrypt und Zufallssalz gespeichert – niemals im Klartext.</li>
+          <li>• Sitzungen laufen über ein http-only-Cookie, enden nach 15 Minuten Inaktivität und werden serverseitig geführt.</li>
+          <li>• Schreibende Anfragen benötigen ein CSRF-Token und eine bekannte Herkunft.</li>
+          <li>• Nach mehreren Fehlversuchen wird der Zugang vorübergehend gesperrt (Brute-Force-Schutz).</li>
+          <li>• Beträge liegen als Dezimalwerte in der Datenbank; alle Finanzberechnungen erfolgen auf dem Server.</li>
+          <li>• Jede Änderung landet mit Benutzer, Zeitpunkt, altem und neuem Wert im Aktivitätsprotokoll.</li>
         </ul>
       </Card>
 
-      <ConfirmDialog
-        open={confirmReset}
-        title="Demodaten zurücksetzen"
-        message="Möchten Sie alle Änderungen verwerfen und die ursprünglichen Demodaten wiederherstellen?"
-        confirmLabel="Zurücksetzen"
-        tone="danger"
-        onCancel={() => setConfirmReset(false)}
-        onConfirm={() => {
-          resetDemoData()
-          setConfirmReset(false)
-          toast("Demodaten wurden zurückgesetzt.")
-        }}
-      />
+      <ChangePasswordModal open={passwordOpen} onClose={() => setPasswordOpen(false)} onDone={() => toast("Passwort wurde geändert.")} />
     </div>
+  )
+}
+
+export function ChangePasswordModal({
+  open,
+  onClose,
+  onDone,
+}: {
+  open: boolean
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [repeatPassword, setRepeatPassword] = useState("")
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
+
+  const save = async () => {
+    setBusy(true)
+    setErrors({})
+    try {
+      await api.post("/api/auth/password", { currentPassword, newPassword, repeatPassword })
+      setCurrentPassword("")
+      setNewPassword("")
+      setRepeatPassword("")
+      onDone()
+      onClose()
+    } catch (caught) {
+      if (caught instanceof ApiRequestError) {
+        setErrors(Object.keys(caught.details).length ? caught.details : { form: caught.message })
+      } else {
+        setErrors({ form: "Das Passwort konnte nicht geändert werden." })
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      title="Passwort ändern"
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Abbrechen</Button>
+          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+            {busy ? "Wird gespeichert …" : "Passwort speichern"}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-4">
+        <Field label="Aktuelles Passwort" required error={errors.currentPassword}>
+          <TextInput
+            type="password"
+            autoComplete="current-password"
+            value={currentPassword}
+            invalid={Boolean(errors.currentPassword)}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+          />
+        </Field>
+        <Field label="Neues Passwort" required error={errors.newPassword} hint="Mindestens 10 Zeichen">
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            value={newPassword}
+            invalid={Boolean(errors.newPassword)}
+            onChange={(event) => setNewPassword(event.target.value)}
+          />
+        </Field>
+        <Field label="Neues Passwort wiederholen" required error={errors.repeatPassword}>
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            value={repeatPassword}
+            invalid={Boolean(errors.repeatPassword)}
+            onChange={(event) => setRepeatPassword(event.target.value)}
+          />
+        </Field>
+        {errors.form && <p className="text-[13px] font-medium text-[var(--danger)]">{errors.form}</p>}
+      </div>
+    </Modal>
   )
 }

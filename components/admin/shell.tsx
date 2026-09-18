@@ -8,20 +8,20 @@ import { Icon } from "@/components/admin/icons"
 import { DashboardView } from "@/components/admin/dashboard-view"
 import { CustomersView } from "@/components/admin/customers-view"
 import { CustomerDetail } from "@/components/admin/customer-detail"
-import { ActivitiesView, DocumentsView, InvestmentsView, MessagesView, PayoutsView } from "@/components/admin/list-views"
+import { AccountsView, ActivitiesView, DocumentsView, MessagesView, PayoutsView } from "@/components/admin/list-views"
 import { SettingsView } from "@/components/admin/settings-view"
 import { NewCustomerWizard } from "@/components/admin/new-customer-wizard"
 import { Badge } from "@/components/ui/primitives"
-import { formatDate, formatEuro, initialsOf } from "@/lib/format"
-import { daysToMaturity, effectiveStatus } from "@/lib/finance"
+import { api, buildQuery } from "@/lib/api"
+import { formatAmount, initialsOf } from "@/lib/format"
 import { roleLabel, useSession } from "@/lib/session"
-import { useData } from "@/lib/store"
+import type { AccountWithCustomer, CustomerListItem } from "@/lib/types"
 
 type ViewId =
   | "dashboard"
   | "customers"
   | "customer"
-  | "investments"
+  | "accounts"
   | "deposits"
   | "documents"
   | "payouts"
@@ -32,34 +32,31 @@ type ViewId =
 const navItems: { id: ViewId; label: string; icon: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "customers", label: "Kunden", icon: "customers" },
-  { id: "investments", label: "Anlagen", icon: "investments" },
-  { id: "deposits", label: "Festgeldkonten", icon: "deposits" },
-  { id: "documents", label: "Dokumente", icon: "documents" },
+  { id: "accounts", label: "Festgeldkonten", icon: "deposits" },
   { id: "payouts", label: "Auszahlungen", icon: "payouts" },
-  { id: "activities", label: "Aktivitäten", icon: "activities" },
+  { id: "documents", label: "Dokumente", icon: "documents" },
   { id: "messages", label: "Nachrichten", icon: "messages" },
+  { id: "activities", label: "Aktivitäten", icon: "activities" },
   { id: "settings", label: "Einstellungen", icon: "settings" },
 ]
 
-const mobileItems: ViewId[] = ["dashboard", "customers", "investments", "payouts", "messages"]
+const mobileItems: ViewId[] = ["dashboard", "customers", "accounts", "payouts", "messages"]
 
 export function AdminShell() {
   const router = useRouter()
-  const { user, signOut, can } = useSession()
-  const { customers, investments, messages, setActor } = useData()
+  const { user, signOut } = useSession()
 
   const [view, setView] = useState<ViewId>("dashboard")
-  const [customerId, setCustomerId] = useState<string | null>(null)
+  const [customerId, setCustomerId] = useState<number | null>(null)
   const [navOpen, setNavOpen] = useState(false)
   const [wizardOpen, setWizardOpen] = useState(false)
   const [search, setSearch] = useState("")
   const [searchOpen, setSearchOpen] = useState(false)
-  const [noticesOpen, setNoticesOpen] = useState(false)
+  const [results, setResults] = useState<{ customers: CustomerListItem[]; accounts: AccountWithCustomer[] }>({
+    customers: [],
+    accounts: [],
+  })
   const searchRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (user?.name) setActor(user.name)
-  }, [user?.name, setActor])
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -69,30 +66,28 @@ export function AdminShell() {
     return () => window.removeEventListener("mousedown", onClick)
   }, [])
 
-  const results = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    if (term.length < 2) return { customers: [], investments: [] }
-    return {
-      customers: customers
-        .filter((customer) =>
-          `${customer.firstName} ${customer.lastName} ${customer.customerNumber} ${customer.email}`.toLowerCase().includes(term),
-        )
-        .slice(0, 5),
-      investments: investments
-        .filter((investment) => `${investment.investmentNumber} ${investment.referenceAccount}`.toLowerCase().includes(term))
-        .slice(0, 4),
+  // Global search: results come from the server while typing.
+  useEffect(() => {
+    const term = search.trim()
+    if (term.length < 2) {
+      setResults({ customers: [], accounts: [] })
+      return
     }
-  }, [search, customers, investments])
+    const timer = window.setTimeout(async () => {
+      try {
+        const [customers, accounts] = await Promise.all([
+          api.get<{ items: CustomerListItem[] }>(`/api/customers${buildQuery({ search: term, pageSize: 5 })}`),
+          api.get<{ accounts: AccountWithCustomer[] }>(`/api/accounts${buildQuery({ search: term, limit: 4 })}`),
+        ])
+        setResults({ customers: customers.items, accounts: accounts.accounts.slice(0, 4) })
+      } catch {
+        setResults({ customers: [], accounts: [] })
+      }
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [search])
 
-  const notifications = useMemo(() => {
-    const unread = messages.filter((message) => !message.read)
-    const due = investments.filter(
-      (investment) => effectiveStatus(investment) !== "beendet" && daysToMaturity(investment) <= 30,
-    )
-    return { unread, due }
-  }, [messages, investments])
-
-  const openCustomer = (id: string) => {
+  const openCustomer = (id: number) => {
     setCustomerId(id)
     setView("customer")
     setNavOpen(false)
@@ -109,22 +104,33 @@ export function AdminShell() {
       setView(next as ViewId)
     }
     setNavOpen(false)
-    setNoticesOpen(false)
     window.scrollTo({ top: 0 })
   }
 
-  const current = navItems.find((item) => item.id === (view === "customer" ? "customers" : view))
+  const current = useMemo(
+    () => navItems.find((item) => item.id === (view === "customer" ? "customers" : view)),
+    [view],
+  )
+
+  const initials = user ? initialsOf(user.fullName.split(" ")[0] ?? "P", user.fullName.split(" ")[1] ?? "B") : "PT"
 
   return (
-    <div className="flex min-h-screen bg-[var(--bg)]">
-      {navOpen && <button type="button" aria-label="Menü schließen" onClick={() => setNavOpen(false)} className="fixed inset-0 z-30 bg-[rgba(11,29,58,.5)] lg:hidden" />}
+    <div className="flex min-h-screen bg-white">
+      {navOpen && (
+        <button
+          type="button"
+          aria-label="Menü schließen"
+          onClick={() => setNavOpen(false)}
+          className="fixed inset-0 z-30 bg-[rgba(11,29,58,.5)] lg:hidden"
+        />
+      )}
 
       <aside
         className={`fixed inset-y-0 left-0 z-40 flex w-[264px] flex-col bg-[var(--navy)] text-white transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between px-6 pb-7 pt-7">
+        <div className="flex items-center justify-between px-6 pb-6 pt-7">
           <a
             href="https://www.pickthebank.eu"
             target="_blank"
@@ -132,17 +138,32 @@ export function AdminShell() {
             title="www.pickthebank.eu"
             className="inline-flex rounded-md transition-opacity hover:opacity-80"
           >
-            <Image src="/logo.png" alt="Pick The Bank – zur Website" width={230} height={46} priority className="h-[38px] w-auto brightness-0 invert" />
+            <Image
+              src="/logo.png"
+              alt="Pick The Bank – zur Website"
+              width={230}
+              height={46}
+              priority
+              className="h-[38px] w-auto brightness-0 invert"
+            />
           </a>
-          <button type="button" onClick={() => setNavOpen(false)} aria-label="Menü schließen" className="rounded-lg p-1.5 text-white/60 hover:text-white lg:hidden">
+          <button
+            type="button"
+            onClick={() => setNavOpen(false)}
+            aria-label="Menü schließen"
+            className="rounded-lg p-1.5 text-white/60 hover:text-white lg:hidden"
+          >
             <Icon name="menu" className="h-5 w-5" />
           </button>
         </div>
 
+        <p className="px-6 pb-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">
+          Verwaltung · Festgeldanlagen
+        </p>
+
         <nav className="flex-1 space-y-0.5 overflow-y-auto scroll-thin px-3">
           {navItems.map((item) => {
             const active = item.id === (view === "customer" ? "customers" : view)
-            if (item.id === "settings" && !can("settings.manage")) return null
             return (
               <button
                 key={item.id}
@@ -150,7 +171,9 @@ export function AdminShell() {
                 onClick={() => go(item.id)}
                 aria-current={active}
                 className={`flex w-full items-center gap-3 rounded-lg px-3.5 py-2.5 text-left text-[14px] transition-colors ${
-                  active ? "bg-white/[0.12] font-semibold text-white" : "font-medium text-white/70 hover:bg-white/[0.07] hover:text-white"
+                  active
+                    ? "bg-white/[0.12] font-semibold text-white"
+                    : "font-medium text-white/70 hover:bg-white/[0.07] hover:text-white"
                 }`}
               >
                 <Icon name={item.icon} className={`h-[18px] w-[18px] ${active ? "text-white" : "text-white/55"}`} />
@@ -163,17 +186,17 @@ export function AdminShell() {
         <div className="border-t border-white/10 px-5 py-4">
           <div className="flex items-center gap-3">
             <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-white/15 text-[12px] font-semibold">
-              {user ? initialsOf(user.name.split(" ")[0] ?? "P", user.name.split(" ")[1] ?? "J") : "PT"}
+              {initials}
             </span>
             <div className="min-w-0">
-              <div className="truncate text-[13.5px] font-semibold">{user?.name}</div>
+              <div className="truncate text-[13.5px] font-semibold">{user?.fullName}</div>
               <div className="truncate text-[12px] text-white/60">{user ? roleLabel[user.role] : ""}</div>
             </div>
           </div>
           <button
             type="button"
-            onClick={() => {
-              signOut("manual")
+            onClick={async () => {
+              await signOut()
               router.replace("/login")
             }}
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-white/15 py-2 text-[13px] font-semibold text-white/80 transition-colors hover:border-white/40 hover:text-white"
@@ -186,7 +209,12 @@ export function AdminShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-20 flex flex-wrap items-center gap-3 border-b border-[var(--line)] bg-white px-4 py-3 sm:px-6">
-          <button type="button" onClick={() => setNavOpen(true)} aria-label="Menü öffnen" className="rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--surface-sunken)] lg:hidden">
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            aria-label="Menü öffnen"
+            className="rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--surface-sunken)] lg:hidden"
+          >
             <Icon name="menu" className="h-5 w-5" />
           </button>
 
@@ -200,14 +228,14 @@ export function AdminShell() {
                   setSearchOpen(true)
                 }}
                 onFocus={() => setSearchOpen(true)}
-                placeholder="Kunde, Kundennummer, E-Mail oder Anlage-ID"
+                placeholder="Kunde, Kundennummer, E-Mail oder Kontonummer"
                 className="w-full min-w-0 border-0 bg-transparent text-[14px] outline-none"
               />
             </label>
 
             {searchOpen && search.trim().length >= 2 && (
               <div className="absolute left-0 right-0 top-12 z-30 max-h-[380px] overflow-y-auto scroll-thin rounded-xl border border-[var(--line)] bg-white p-2 shadow-lift">
-                {results.customers.length === 0 && results.investments.length === 0 && (
+                {results.customers.length === 0 && results.accounts.length === 0 && (
                   <p className="px-3 py-3 text-[13px] text-[var(--muted)]">Keine Treffer für „{search}“.</p>
                 )}
 
@@ -235,92 +263,38 @@ export function AdminShell() {
                   </>
                 )}
 
-                {results.investments.length > 0 && (
+                {results.accounts.length > 0 && (
                   <>
-                    <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--faint)]">Anlagen</p>
-                    {results.investments.map((investment) => {
-                      const owner = customers.find((entry) => entry.id === investment.customerId)
-                      return (
-                        <button
-                          key={investment.id}
-                          type="button"
-                          onClick={() => openCustomer(investment.customerId)}
-                          className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left hover:bg-[var(--surface-sunken)]"
-                        >
-                          <span>
-                            <span className="num block text-[13.5px] font-semibold text-[var(--ink)]">{investment.investmentNumber}</span>
-                            <span className="block text-[12px] text-[var(--muted)]">
-                              {owner ? `${owner.firstName} ${owner.lastName}` : "–"} · {formatEuro(investment.principal, 0)}
-                            </span>
+                    <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--faint)]">Festgeldkonten</p>
+                    {results.accounts.map((account) => (
+                      <button
+                        key={account.id}
+                        type="button"
+                        onClick={() => openCustomer(account.customer.id)}
+                        className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left hover:bg-[var(--surface-sunken)]"
+                      >
+                        <span>
+                          <span className="num block text-[13.5px] font-semibold text-[var(--ink)]">{account.accountNumber}</span>
+                          <span className="block text-[12px] text-[var(--muted)]">
+                            {account.customer.firstName} {account.customer.lastName} ·{" "}
+                            {formatAmount(account.principalAmount, account.currency, 0)}
                           </span>
-                          <Icon name="back" className="h-4 w-4 rotate-180 text-[var(--faint)]" />
-                        </button>
-                      )
-                    })}
+                        </span>
+                        <Icon name="back" className="h-4 w-4 rotate-180 text-[var(--faint)]" />
+                      </button>
+                    ))}
                   </>
                 )}
               </div>
             )}
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setNoticesOpen((open) => !open)}
-                aria-label="Benachrichtigungen"
-                className="relative grid h-10 w-10 place-items-center rounded-lg border border-[var(--line)] text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--ink)]"
-              >
-                <Icon name="bell" />
-                {(notifications.unread.length > 0 || notifications.due.length > 0) && (
-                  <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[var(--danger)]" />
-                )}
-              </button>
-
-              {noticesOpen && (
-                <div className="absolute right-0 top-12 z-30 w-[320px] rounded-xl border border-[var(--line)] bg-white p-2 shadow-lift">
-                  <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--faint)]">Benachrichtigungen</p>
-                  {notifications.due.slice(0, 3).map((investment) => {
-                    const owner = customers.find((entry) => entry.id === investment.customerId)
-                    return (
-                      <button
-                        key={investment.id}
-                        type="button"
-                        onClick={() => openCustomer(investment.customerId)}
-                        className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--surface-sunken)]"
-                      >
-                        <span className="block text-[13px] font-medium text-[var(--ink)]">
-                          {investment.investmentNumber} wird am {formatDate(investment.maturityDate)} fällig
-                        </span>
-                        <span className="block text-[12px] text-[var(--muted)]">{owner ? `${owner.firstName} ${owner.lastName}` : ""}</span>
-                      </button>
-                    )
-                  })}
-                  {notifications.unread.slice(0, 3).map((message) => (
-                    <button
-                      key={message.id}
-                      type="button"
-                      onClick={() => openCustomer(message.customerId)}
-                      className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--surface-sunken)]"
-                    >
-                      <span className="block text-[13px] font-medium text-[var(--ink)]">{message.subject}</span>
-                      <span className="block text-[12px] text-[var(--muted)]">Vom Kunden noch nicht gelesen</span>
-                    </button>
-                  ))}
-                  {notifications.due.length === 0 && notifications.unread.length === 0 && (
-                    <p className="px-3 py-3 text-[13px] text-[var(--muted)]">Keine offenen Hinweise.</p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2.5 rounded-lg border border-[var(--line)] py-1 pl-1 pr-3">
-              <span className="grid h-8 w-8 place-items-center rounded-md bg-[var(--navy)] text-[11px] font-semibold text-white">
-                {user ? initialsOf(user.name.split(" ")[0] ?? "P", user.name.split(" ")[1] ?? "J") : "PT"}
-              </span>
-              <span className="hidden text-[13px] font-semibold text-[var(--ink)] sm:block">{user?.name}</span>
-              <Badge tone="neutral">{user ? roleLabel[user.role] : ""}</Badge>
-            </div>
+          <div className="ml-auto flex items-center gap-2.5 rounded-lg border border-[var(--line)] py-1 pl-1 pr-3">
+            <span className="grid h-8 w-8 place-items-center rounded-md bg-[var(--navy)] text-[11px] font-semibold text-white">
+              {initials}
+            </span>
+            <span className="hidden text-[13px] font-semibold text-[var(--ink)] sm:block">{user?.fullName}</span>
+            <Badge tone="neutral">{user ? roleLabel[user.role] : ""}</Badge>
           </div>
         </header>
 
@@ -328,17 +302,13 @@ export function AdminShell() {
           <span>Pick The Bank</span>
           <span>/</span>
           <span className="font-semibold text-[var(--ink)]">{view === "customer" ? "Kundenakte" : current?.label}</span>
-          <span className="ml-1 rounded-full bg-[var(--surface-sunken)] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-[var(--muted)]">
-            Demodaten
-          </span>
         </div>
 
         <main className="flex-1 px-4 pb-24 pt-5 sm:px-6 lg:pb-10">
           {view === "dashboard" && <DashboardView onOpenCustomer={openCustomer} onNavigate={go} />}
           {view === "customers" && <CustomersView onOpenCustomer={openCustomer} onNewCustomer={() => setWizardOpen(true)} />}
           {view === "customer" && customerId && <CustomerDetail customerId={customerId} onBack={() => setView("customers")} />}
-          {view === "investments" && <InvestmentsView onOpenCustomer={openCustomer} />}
-          {view === "deposits" && <InvestmentsView onOpenCustomer={openCustomer} fixedTermOnly />}
+          {view === "accounts" && <AccountsView onOpenCustomer={openCustomer} />}
           {view === "documents" && <DocumentsView onOpenCustomer={openCustomer} />}
           {view === "payouts" && <PayoutsView onOpenCustomer={openCustomer} />}
           {view === "activities" && <ActivitiesView onOpenCustomer={openCustomer} />}
@@ -346,7 +316,6 @@ export function AdminShell() {
           {view === "settings" && <SettingsView />}
         </main>
 
-        {/* Mobile bottom navigation */}
         <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-[var(--line)] bg-white lg:hidden">
           {mobileItems.map((id) => {
             const item = navItems.find((entry) => entry.id === id)

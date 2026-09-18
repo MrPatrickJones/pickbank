@@ -5,12 +5,12 @@ import { useState } from "react"
 import { Icon } from "@/components/admin/icons"
 import { Badge, Button, Card } from "@/components/ui/primitives"
 import { ConfirmDialog, Modal, useToast } from "@/components/ui/overlays"
+import { ApiRequestError, api } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
-import { useData } from "@/lib/store"
 import { useSession } from "@/lib/session"
-import type { Customer } from "@/lib/types"
+import type { Customer, CustomerLogin } from "@/lib/types"
 
-/** Credentials are shown exactly once – afterwards only the hash remains. */
+/** The generated password is shown once – afterwards only the hash exists. */
 export function CredentialsModal({
   open,
   email,
@@ -74,32 +74,47 @@ export function CredentialsModal({
 
       <p className="mt-4 flex items-start gap-2 text-[12.5px] leading-relaxed text-[var(--muted)]">
         <Icon name="shield" className="mt-0.5 h-4 w-4 flex-none text-[var(--good)]" />
-        Der Kunde wird beim ersten Login aufgefordert, das Passwort zu ändern. Er kann seine Daten einsehen, aber
-        keine Änderungen vornehmen.
+        Der Kunde wird beim ersten Login aufgefordert, das Passwort zu ändern. Er sieht ausschließlich seine eigenen
+        Daten und kann nichts ändern.
       </p>
     </Modal>
   )
 }
 
-export function AccessCard({ customer }: { customer: Customer }) {
-  const { accountOf, createAccount, resetAccountPassword, setAccountStatus } = useData()
+export function AccessCard({
+  customer,
+  login,
+  onChanged,
+}: {
+  customer: Customer
+  login: CustomerLogin | null
+  onChanged: () => void
+}) {
   const { can } = useSession()
   const toast = useToast()
 
-  const account = accountOf(customer.id)
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
   const [confirm, setConfirm] = useState<"create" | "reset" | "lock" | "unlock" | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const manage = can("accounts.manage")
+  const manage = can("logins.manage")
 
-  const run = async (action: () => Promise<string>, email: string, message: string) => {
+  const run = async (action: "create" | "reset" | "lock" | "unlock", message: string) => {
     setBusy(true)
-    const password = await action()
-    setBusy(false)
-    setConfirm(null)
-    setCredentials({ email, password })
-    toast(message)
+    try {
+      const result = await api.post<{ login: CustomerLogin | null; password?: string }>(
+        `/api/customers/${customer.id}/login`,
+        { action },
+      )
+      if (result.password) setCredentials({ email: result.login?.email ?? customer.email, password: result.password })
+      toast(message)
+      onChanged()
+    } catch (caught) {
+      toast(caught instanceof ApiRequestError ? caught.message : "Aktion fehlgeschlagen.", "error")
+    } finally {
+      setBusy(false)
+      setConfirm(null)
+    }
   }
 
   return (
@@ -108,23 +123,23 @@ export function AccessCard({ customer }: { customer: Customer }) {
         title="Kundenzugang"
         subtitle="Login für das Kundenportal – wird ausschließlich von Pick The Bank vergeben"
         action={
-          account ? (
-            <Badge tone={account.status === "aktiv" ? "good" : "danger"}>
-              {account.status === "aktiv" ? "Aktiv" : "Gesperrt"}
+          login ? (
+            <Badge tone={login.status === "ACTIVE" ? "good" : "danger"}>
+              {login.status === "ACTIVE" ? "Aktiv" : "Gesperrt"}
             </Badge>
           ) : (
             <Badge tone="neutral">Kein Zugang</Badge>
           )
         }
       >
-        {account ? (
+        {login ? (
           <>
             <dl className="divide-y divide-[var(--line-soft)]">
               {[
-                ["Benutzername", account.loginEmail],
-                ["Angelegt von", `${account.createdBy} · ${formatDateTime(account.createdAt)}`],
-                ["Passwort zuletzt vergeben", formatDateTime(account.passwordChangedAt)],
-                ["Letzte Anmeldung", account.lastLoginAt ? formatDateTime(account.lastLoginAt) : "noch nie angemeldet"],
+                ["Benutzername", login.email],
+                ["Angelegt von", `${login.createdBy ?? "–"} · ${formatDateTime(login.createdAt)}`],
+                ["Passwort zuletzt vergeben", formatDateTime(login.passwordChangedAt)],
+                ["Letzte Anmeldung", login.lastLoginAt ? formatDateTime(login.lastLoginAt) : "noch nie angemeldet"],
                 ["Rechte", "Nur Lesen – Änderungen ausschließlich durch Pick The Bank"],
               ].map(([label, value]) => (
                 <div key={label} className="flex flex-wrap items-baseline justify-between gap-3 px-5 py-3">
@@ -136,15 +151,15 @@ export function AccessCard({ customer }: { customer: Customer }) {
 
             {manage && (
               <div className="flex flex-wrap items-center gap-2 border-t border-[var(--line-soft)] px-5 py-4">
-                <Button size="sm" onClick={() => setConfirm("reset")} disabled={busy}>
+                <Button size="sm" disabled={busy} onClick={() => setConfirm("reset")}>
                   Passwort zurücksetzen
                 </Button>
-                {account.status === "aktiv" ? (
-                  <Button size="sm" variant="danger" onClick={() => setConfirm("lock")}>
+                {login.status === "ACTIVE" ? (
+                  <Button size="sm" variant="danger" disabled={busy} onClick={() => setConfirm("lock")}>
                     Zugang sperren
                   </Button>
                 ) : (
-                  <Button size="sm" variant="primary" onClick={() => setConfirm("unlock")}>
+                  <Button size="sm" variant="primary" disabled={busy} onClick={() => setConfirm("unlock")}>
                     Zugang entsperren
                   </Button>
                 )}
@@ -154,8 +169,8 @@ export function AccessCard({ customer }: { customer: Customer }) {
         ) : (
           <div className="px-5 py-6">
             <p className="text-[13.5px] leading-relaxed text-[var(--body)]">
-              Für diesen Kunden besteht noch kein Zugang zum Kundenportal. Beim Anlegen erzeugt das System ein
-              Passwort, das Sie einmalig sehen und dem Kunden übergeben.
+              Für diesen Kunden besteht noch kein Zugang zum Kundenportal. Beim Anlegen erzeugt der Server ein Passwort,
+              das Sie einmalig sehen und dem Kunden übergeben.
             </p>
             {manage && (
               <Button variant="primary" size="sm" className="mt-4" disabled={busy} onClick={() => setConfirm("create")}>
@@ -173,24 +188,16 @@ export function AccessCard({ customer }: { customer: Customer }) {
         message={`Für ${customer.firstName} ${customer.lastName} wird ein Zugang mit dem Benutzernamen ${customer.email} erstellt. Das Passwort wird einmalig angezeigt.`}
         confirmLabel="Zugang anlegen"
         onCancel={() => setConfirm(null)}
-        onConfirm={() =>
-          run(() => createAccount(customer.id, customer.email), customer.email, "Kundenzugang wurde angelegt.")
-        }
+        onConfirm={() => void run("create", "Kundenzugang wurde angelegt.")}
       />
-
       <ConfirmDialog
         open={confirm === "reset"}
         title="Passwort zurücksetzen"
-        message="Möchten Sie ein neues Passwort vergeben? Das bisherige Passwort wird sofort ungültig."
+        message="Möchten Sie ein neues Passwort vergeben? Das bisherige Passwort wird sofort ungültig und offene Sitzungen werden beendet."
         confirmLabel="Neues Passwort erzeugen"
         onCancel={() => setConfirm(null)}
-        onConfirm={() =>
-          account
-            ? run(() => resetAccountPassword(account.id), account.loginEmail, "Neues Passwort wurde vergeben.")
-            : setConfirm(null)
-        }
+        onConfirm={() => void run("reset", "Neues Passwort wurde vergeben.")}
       />
-
       <ConfirmDialog
         open={confirm === "lock"}
         title="Zugang sperren"
@@ -198,28 +205,15 @@ export function AccessCard({ customer }: { customer: Customer }) {
         confirmLabel="Sperren"
         tone="danger"
         onCancel={() => setConfirm(null)}
-        onConfirm={() => {
-          if (account) {
-            setAccountStatus(account.id, "gesperrt")
-            toast("Zugang wurde gesperrt.")
-          }
-          setConfirm(null)
-        }}
+        onConfirm={() => void run("lock", "Zugang wurde gesperrt.")}
       />
-
       <ConfirmDialog
         open={confirm === "unlock"}
         title="Zugang entsperren"
         message="Der Kunde kann sich anschließend wieder mit seinen Zugangsdaten anmelden."
         confirmLabel="Entsperren"
         onCancel={() => setConfirm(null)}
-        onConfirm={() => {
-          if (account) {
-            setAccountStatus(account.id, "aktiv")
-            toast("Zugang wurde entsperrt.")
-          }
-          setConfirm(null)
-        }}
+        onConfirm={() => void run("unlock", "Zugang wurde entsperrt.")}
       />
 
       <CredentialsModal

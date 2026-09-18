@@ -1,73 +1,73 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 
-import { Icon } from "@/components/admin/icons"
 import { AccessCard } from "@/components/admin/access-card"
-import { InvestmentForm } from "@/components/admin/investment-form"
+import { AccountForm } from "@/components/admin/account-form"
+import { Icon } from "@/components/admin/icons"
 import {
+  AccountStatusBadge,
   Badge,
   Button,
   Card,
   CustomerStatusBadge,
   EmptyState,
-  InvestmentStatusBadge,
+  ErrorState,
   Kpi,
   KycBadge,
+  LoadingState,
   Table,
   Tabs,
   cell,
   cellRight,
   cellStrong,
-  customerStatusOptions,
-  kycStatusOptions,
   rowClass,
 } from "@/components/ui/primitives"
-import { Field, Select, TextInput, Textarea, isEmail } from "@/components/ui/form"
+import { Field, Select, TextInput, Textarea } from "@/components/ui/form"
 import { ConfirmDialog, FileDrop, Modal, useToast } from "@/components/ui/overlays"
-import { formatDate, formatDateTime, formatEuro, formatFileSize, formatPercent, initialsOf } from "@/lib/format"
-import { currentValue, customerTotals, effectiveStatus } from "@/lib/finance"
-import { useData } from "@/lib/store"
+import { ApiRequestError, api } from "@/lib/api"
+import { formatAmount, formatDate, formatDateTime, formatFileSize, formatPercent, initialsOf } from "@/lib/format"
+import { customerStatusOptions, documentCategoryLabels, documentCategoryOptions, kycLabels, kycStatusOptions } from "@/lib/labels"
 import { useSession } from "@/lib/session"
-import { documentCategoryLabels as categoryLabels, kycLabels, productLabels } from "@/lib/labels"
-import type { Customer, DocumentCategory, Investment } from "@/lib/types"
+import { useResource } from "@/lib/use-resource"
+import type { Account, Customer, CustomerFile, DocumentCategory } from "@/lib/types"
 
-
-
-export function CustomerDetail({ customerId, onBack }: { customerId: string; onBack: () => void }) {
-  const { customerById, investmentsOf, documentsOf, activitiesOf, messagesOf, updateCustomer, addDocument, removeDocument, sendMessage } =
-    useData()
+export function CustomerDetail({ customerId, onBack }: { customerId: number; onBack: () => void }) {
   const { can } = useSession()
   const toast = useToast()
+
+  const { data, loading, error, reload } = useResource<CustomerFile>(
+    () => api.get<CustomerFile>(`/api/customers/${customerId}`),
+    [customerId],
+  )
 
   const [tab, setTab] = useState("overview")
   const [editPersonal, setEditPersonal] = useState(false)
   const [editContact, setEditContact] = useState(false)
   const [editStatus, setEditStatus] = useState(false)
-  const [investmentForm, setInvestmentForm] = useState<{ open: boolean; investment: Investment | null }>({
-    open: false,
-    investment: null,
-  })
+  const [accountForm, setAccountForm] = useState<{ open: boolean; account: Account | null }>({ open: false, account: null })
   const [uploadOpen, setUploadOpen] = useState(false)
   const [messageOpen, setMessageOpen] = useState(false)
-  const [removeTarget, setRemoveTarget] = useState<string | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<number | null>(null)
 
-  const customer = customerById(customerId)
-  const investments = useMemo(() => investmentsOf(customerId), [investmentsOf, customerId])
-  const documents = useMemo(() => documentsOf(customerId), [documentsOf, customerId])
-  const activities = useMemo(() => activitiesOf(customerId), [activitiesOf, customerId])
-  const messages = useMemo(() => messagesOf(customerId), [messagesOf, customerId])
-  const totals = useMemo(() => customerTotals(investments), [investments])
+  if (loading && !data) return <Card><LoadingState /></Card>
+  if (error) return <Card><ErrorState message={error} onRetry={reload} /></Card>
+  if (!data) return null
 
-  if (!customer) {
-    return (
-      <Card>
-        <EmptyState title="Kunde nicht gefunden" hint="Der Datensatz wurde möglicherweise gelöscht." />
-      </Card>
-    )
-  }
-
+  const { customer, totals, accounts, documents, messages, activities, login } = data
   const writable = can("customers.write")
+
+  const patchCustomer = async (patch: Record<string, unknown>, message: string) => {
+    try {
+      await api.patch(`/api/customers/${customer.id}`, patch)
+      toast(message)
+      await reload()
+      return true
+    } catch (caught) {
+      toast(caught instanceof ApiRequestError ? caught.message : "Speichern fehlgeschlagen.", "error")
+      return false
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -87,7 +87,7 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
             </h1>
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-[var(--muted)]">
               <span className="num">Kundennummer: {customer.customerNumber}</span>
-              <CustomerStatusBadge status={customer.status} />
+              <CustomerStatusBadge status={customer.customerStatus} />
               <KycBadge status={customer.kycStatus} />
             </div>
           </div>
@@ -96,7 +96,7 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
         {writable && (
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={() => setEditStatus(true)}>Bearbeiten</Button>
-            <Button onClick={() => setInvestmentForm({ open: true, investment: null })}>Neue Anlage</Button>
+            <Button onClick={() => setAccountForm({ open: true, account: null })}>Neues Konto</Button>
             <Button onClick={() => setUploadOpen(true)}>Dokument hochladen</Button>
             <Button variant="primary" onClick={() => setMessageOpen(true)}>
               Nachricht senden
@@ -106,10 +106,10 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi label="Gesamtanlage" value={formatEuro(totals.principal, 0)} tone="accent" hint={`${investments.length} Verträge`} />
-        <Kpi label="Aktive Anlagen" value={String(totals.activeCount)} hint={`Ø ${formatPercent(totals.averageRate)}`} />
-        <Kpi label="Zinserträge bisher" value={formatEuro(totals.interest)} tone="good" hint={`${formatEuro(totals.expectedInterest)} bei Laufzeitende`} />
-        <Kpi label="Nächste Fälligkeit" value={totals.nextMaturity ? formatDate(totals.nextMaturity) : "–"} hint="nächste auslaufende Anlage" />
+        <Kpi label="Gesamtanlage" value={formatAmount(totals.principal, "EUR", 0)} tone="accent" hint={`${totals.accountCount} Konten`} />
+        <Kpi label="Aktive Konten" value={String(totals.activeAccounts)} hint={`Ø ${formatPercent(totals.averageRate)}`} />
+        <Kpi label="Zinserträge bisher" value={formatAmount(totals.accruedInterest)} tone="good" hint={`${formatAmount(totals.expectedInterest)} bei Laufzeitende`} />
+        <Kpi label="Nächste Fälligkeit" value={totals.nextMaturity ? formatDate(totals.nextMaturity) : "–"} hint="nächstes auslaufendes Konto" />
       </div>
 
       <Tabs
@@ -117,7 +117,7 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
         onChange={setTab}
         tabs={[
           { id: "overview", label: "Übersicht" },
-          { id: "investments", label: "Anlagen", count: investments.length },
+          { id: "accounts", label: "Festgeldkonten", count: accounts.length },
           { id: "documents", label: "Dokumente", count: documents.length },
           { id: "activities", label: "Aktivitäten", count: activities.length },
           { id: "messages", label: "Nachrichten", count: messages.length },
@@ -126,17 +126,20 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
 
       {tab === "overview" && (
         <div className="grid gap-5 lg:grid-cols-2">
-          <Card
-            title="Persönliche Informationen"
-            action={writable ? <Button size="sm" onClick={() => setEditPersonal(true)}>Bearbeiten</Button> : null}
-          >
+          <Card title="Persönliche Informationen" action={writable ? <Button size="sm" onClick={() => setEditPersonal(true)}>Bearbeiten</Button> : null}>
             <DefinitionList
               rows={[
                 ["Vorname", customer.firstName],
                 ["Nachname", customer.lastName],
+                ["Firma", customer.companyName ?? "–"],
                 ["Geburtsdatum", customer.dateOfBirth ? formatDate(customer.dateOfBirth) : "–"],
-                ["Nationalität", customer.nationality],
-                ["Adresse", `${customer.address}, ${customer.postalCode} ${customer.city}, ${customer.country}`],
+                ["Nationalität", customer.nationality ?? "–"],
+                [
+                  "Adresse",
+                  [customer.address, `${customer.postalCode ?? ""} ${customer.city ?? ""}`.trim(), customer.country]
+                    .filter(Boolean)
+                    .join(", "),
+                ],
               ]}
             />
           </Card>
@@ -145,85 +148,69 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
             <DefinitionList
               rows={[
                 ["E-Mail", customer.email],
-                ["Mobiltelefon", customer.mobile || "–"],
-                ["Telefon", customer.phone || "–"],
+                ["Mobiltelefon", customer.mobile ?? "–"],
+                ["Telefon", customer.phone ?? "–"],
               ]}
             />
           </Card>
+
+          <AccessCard customer={customer} login={login} onChanged={reload} />
 
           <Card title="Identifikation & Status">
             <DefinitionList
               rows={[
-                ["Ausweisart", customer.identificationType],
+                ["Ausweisart", customer.identificationType ?? "–"],
                 ["KYC-Status", kycLabels[customer.kycStatus]],
                 ["Identifiziert am", customer.identifiedAt ? formatDate(customer.identifiedAt) : "–"],
                 ["Kunde seit", formatDate(customer.createdAt.slice(0, 10))],
                 ["Zuletzt aktualisiert", formatDateTime(customer.updatedAt)],
+                ["Letzte Anmeldung", customer.lastLoginAt ? formatDateTime(customer.lastLoginAt) : "–"],
               ]}
             />
-          </Card>
-
-          <AccessCard customer={customer} />
-
-          <Card title="Letzte Aktivitäten">
-            {activities.length === 0 ? (
-              <EmptyState title="Noch keine Aktivitäten" />
-            ) : (
-              <ul className="divide-y divide-[var(--line-soft)]">
-                {activities.slice(0, 5).map((activity) => (
-                  <li key={activity.id} className="px-5 py-3">
-                    <div className="num text-[12px] text-[var(--faint)]">{formatDateTime(activity.timestamp)}</div>
-                    <div className="mt-0.5 text-[13.5px] text-[var(--body)]">{activity.description}</div>
-                    <div className="text-[12px] text-[var(--faint)]">{activity.user}</div>
-                  </li>
-                ))}
-              </ul>
-            )}
           </Card>
         </div>
       )}
 
-      {tab === "investments" && (
+      {tab === "accounts" && (
         <Card
-          title="Meine Anlagen"
-          subtitle="Alle Festgeld- und Tagesgeldverträge dieses Kunden"
-          action={writable ? <Button size="sm" variant="primary" onClick={() => setInvestmentForm({ open: true, investment: null })}>Neue Anlage</Button> : null}
+          title="Festgeldkonten"
+          subtitle="Alle Konten dieses Kunden"
+          action={writable ? <Button size="sm" variant="primary" onClick={() => setAccountForm({ open: true, account: null })}>Neues Konto</Button> : null}
         >
-          {investments.length === 0 ? (
-            <EmptyState title="Keine Anlagen erfasst" hint="Legen Sie die erste Anlage für diesen Kunden an." />
+          {accounts.length === 0 ? (
+            <EmptyState title="Keine Konten erfasst" hint="Legen Sie das erste Festgeldkonto an." />
           ) : (
             <Table
-              minWidth={980}
+              minWidth={1020}
               headers={[
-                "Anlage",
+                "Konto",
+                "Produkt",
                 { label: "Betrag", align: "right" },
                 { label: "Zinssatz", align: "right" },
                 "Laufzeit",
                 "Start",
                 "Fälligkeit",
-                { label: "Aktueller Wert", align: "right" },
+                { label: "Zinsertrag", align: "right" },
                 "Status",
                 { label: "", align: "right" },
               ]}
             >
-              {investments.map((investment) => (
-                <tr key={investment.id} className={rowClass}>
-                  <td className={cellStrong}>
-                    <span className="num">{investment.investmentNumber}</span>
-                    <div className="text-[12px] font-normal text-[var(--faint)]">{productLabels[investment.productType]}</div>
-                  </td>
-                  <td className={cellRight}>{formatEuro(investment.principal, 0)}</td>
-                  <td className={cellRight}>{formatPercent(investment.interestRate)}</td>
-                  <td className={cell}>{investment.term} Monate</td>
-                  <td className={`${cell} num`}>{formatDate(investment.startDate)}</td>
-                  <td className={`${cell} num`}>{formatDate(investment.maturityDate)}</td>
-                  <td className={cellRight}>{formatEuro(currentValue(investment))}</td>
+              {accounts.map((account) => (
+                <tr key={account.id} className={rowClass}>
+                  <td className={`${cellStrong} num`}>{account.accountNumber}</td>
+                  <td className={cell}>{account.productName}</td>
+                  <td className={cellRight}>{formatAmount(account.principalAmount, account.currency, 0)}</td>
+                  <td className={cellRight}>{formatPercent(account.interestRate)}</td>
+                  <td className={cell}>{account.termMonths} Monate</td>
+                  <td className={`${cell} num`}>{formatDate(account.startDate)}</td>
+                  <td className={`${cell} num`}>{formatDate(account.maturityDate)}</td>
+                  <td className={cellRight}>{formatAmount(account.accruedInterest, account.currency)}</td>
                   <td className={cell}>
-                    <InvestmentStatusBadge status={effectiveStatus(investment)} />
+                    <AccountStatusBadge status={account.status} />
                   </td>
                   <td className={`${cell} text-right`}>
                     {writable && (
-                      <Button size="sm" onClick={() => setInvestmentForm({ open: true, investment })}>
+                      <Button size="sm" onClick={() => setAccountForm({ open: true, account })}>
                         Bearbeiten
                       </Button>
                     )}
@@ -251,21 +238,16 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
               {documents.map((document) => (
                 <tr key={document.id} className={rowClass}>
                   <td className={cellStrong}>{document.filename}</td>
-                  <td className={cell}>{categoryLabels[document.category]}</td>
+                  <td className={cell}>{documentCategoryLabels[document.category]}</td>
                   <td className={`${cell} num`}>{formatDate(document.uploadedAt.slice(0, 10))}</td>
-                  <td className={cell}>{document.uploadedBy}</td>
+                  <td className={cell}>{document.uploadedBy ?? "–"}</td>
                   <td className={cellRight}>{formatFileSize(document.sizeKb)}</td>
                   <td className={`${cell} text-right`}>
-                    <div className="inline-flex gap-2">
-                      <Button size="sm" onClick={() => toast("Vorschau ist im Prototyp nicht hinterlegt.", "info")}>
-                        Vorschau
+                    {writable && (
+                      <Button size="sm" variant="ghost" onClick={() => setRemoveTarget(document.id)}>
+                        Löschen
                       </Button>
-                      {writable && (
-                        <Button size="sm" variant="ghost" onClick={() => setRemoveTarget(document.id)}>
-                          Löschen
-                        </Button>
-                      )}
-                    </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -283,14 +265,18 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
               {activities.map((activity) => (
                 <li key={activity.id} className="px-5 py-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="num text-[12.5px] font-semibold text-[var(--ink)]">{formatDateTime(activity.timestamp)}</span>
+                    <span className="num text-[12.5px] font-semibold text-[var(--ink)]">{formatDateTime(activity.createdAt)}</span>
                     <span className="text-[12.5px] text-[var(--faint)]">{activity.user}</span>
                   </div>
                   <p className="mt-1 text-[13.5px] text-[var(--body)]">{activity.description}</p>
-                  {(activity.previousValue || activity.newValue) && (
+                  {(activity.oldValue || activity.newValue) && (
                     <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[12.5px]">
-                      {activity.previousValue && <span className="rounded bg-[var(--surface-sunken)] px-2 py-0.5 text-[var(--muted)] line-through">{activity.previousValue}</span>}
-                      {activity.newValue && <span className="rounded bg-[var(--good-soft)] px-2 py-0.5 font-semibold text-[var(--good)]">{activity.newValue}</span>}
+                      {activity.oldValue && (
+                        <span className="rounded bg-[var(--surface-sunken)] px-2 py-0.5 text-[var(--muted)] line-through">{activity.oldValue}</span>
+                      )}
+                      {activity.newValue && (
+                        <span className="rounded bg-[var(--good-soft)] px-2 py-0.5 font-semibold text-[var(--good)]">{activity.newValue}</span>
+                      )}
                     </p>
                   )}
                 </li>
@@ -318,8 +304,8 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
                   </div>
                   <p className="mt-1.5 text-[13.5px] leading-relaxed text-[var(--body)]">{message.body}</p>
                   <p className="mt-1.5 flex items-center gap-2 text-[12px] text-[var(--faint)]">
-                    {message.sentBy}
-                    {!message.read && <Badge tone="info">Ungelesen</Badge>}
+                    {message.sentBy ?? "Pick The Bank"}
+                    {!message.readAt && <Badge tone="info">Ungelesen</Badge>}
                   </p>
                 </li>
               ))}
@@ -328,36 +314,51 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
         </Card>
       )}
 
-      {/* --- Modals --- */}
-      <EditPersonalModal open={editPersonal} customer={customer} onClose={() => setEditPersonal(false)} onSave={(patch) => { updateCustomer(customer.id, patch); toast("Persönliche Daten wurden gespeichert.") }} />
-      <EditContactModal open={editContact} customer={customer} onClose={() => setEditContact(false)} onSave={(patch) => { updateCustomer(customer.id, patch); toast("Kontaktdaten wurden gespeichert.") }} />
-      <EditStatusModal open={editStatus} customer={customer} onClose={() => setEditStatus(false)} onSave={(patch) => { updateCustomer(customer.id, patch); toast("Status wurde aktualisiert.") }} />
+      <EditPersonalModal
+        open={editPersonal}
+        customer={customer}
+        onClose={() => setEditPersonal(false)}
+        onSave={(patch) => patchCustomer(patch, "Persönliche Daten wurden gespeichert.")}
+      />
+      <EditContactModal
+        open={editContact}
+        customer={customer}
+        onClose={() => setEditContact(false)}
+        onSave={(patch) => patchCustomer(patch, "Kontaktdaten wurden gespeichert.")}
+      />
+      <EditStatusModal
+        open={editStatus}
+        customer={customer}
+        onClose={() => setEditStatus(false)}
+        onSave={(patch) => patchCustomer(patch, "Status wurde aktualisiert.")}
+      />
 
-      <InvestmentForm
-        open={investmentForm.open}
+      <AccountForm
+        open={accountForm.open}
         customerId={customer.id}
-        investment={investmentForm.investment}
-        onClose={() => setInvestmentForm({ open: false, investment: null })}
+        account={accountForm.account}
+        onClose={() => setAccountForm({ open: false, account: null })}
+        onSaved={reload}
       />
 
       <UploadModal
         open={uploadOpen}
+        customerId={customer.id}
         onClose={() => setUploadOpen(false)}
-        onUpload={(file) => {
-          addDocument(customer.id, file)
-          toast(`„${file.filename}“ wurde hochgeladen.`)
-          setUploadOpen(false)
+        onUploaded={async () => {
+          toast("Dokument wurde hinterlegt.")
+          await reload()
         }}
       />
 
       <MessageModal
         open={messageOpen}
+        customerId={customer.id}
         customerName={`${customer.firstName} ${customer.lastName}`}
         onClose={() => setMessageOpen(false)}
-        onSend={(subject, body) => {
-          sendMessage(customer.id, subject, body)
+        onSent={async () => {
           toast("Nachricht wurde versendet.")
-          setMessageOpen(false)
+          await reload()
         }}
       />
 
@@ -368,10 +369,15 @@ export function CustomerDetail({ customerId, onBack }: { customerId: string; onB
         confirmLabel="Löschen"
         tone="danger"
         onCancel={() => setRemoveTarget(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (removeTarget) {
-            removeDocument(removeTarget)
-            toast("Dokument wurde gelöscht.")
+            try {
+              await api.delete(`/api/documents/${removeTarget}`)
+              toast("Dokument wurde gelöscht.")
+              await reload()
+            } catch (caught) {
+              toast(caught instanceof ApiRequestError ? caught.message : "Löschen fehlgeschlagen.", "error")
+            }
           }
           setRemoveTarget(null)
         }}
@@ -402,7 +408,7 @@ function EditPersonalModal({
   open: boolean
   customer: Customer
   onClose: () => void
-  onSave: (patch: Partial<Customer>) => void
+  onSave: (patch: Record<string, unknown>) => Promise<boolean>
 }) {
   const [form, setForm] = useState(customer)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -414,24 +420,26 @@ function EditPersonalModal({
     }
   }, [open, customer])
 
-  const save = () => {
+  const save = async () => {
     const found: Record<string, string> = {}
     if (!form.firstName.trim()) found.firstName = "Bitte geben Sie den Vornamen ein."
     if (!form.lastName.trim()) found.lastName = "Bitte geben Sie den Nachnamen ein."
+    if (!form.city?.trim()) found.city = "Bitte geben Sie den Ort ein."
     setErrors(found)
     if (Object.keys(found).length) return
 
-    onSave({
+    const ok = await onSave({
       firstName: form.firstName.trim(),
       lastName: form.lastName.trim(),
-      dateOfBirth: form.dateOfBirth,
-      nationality: form.nationality,
-      address: form.address.trim(),
-      postalCode: form.postalCode.trim(),
-      city: form.city.trim(),
+      companyName: form.companyName || null,
+      dateOfBirth: form.dateOfBirth || null,
+      nationality: form.nationality || null,
+      address: form.address || null,
+      postalCode: form.postalCode || null,
+      city: form.city,
       country: form.country,
     })
-    onClose()
+    if (ok) onClose()
   }
 
   return (
@@ -442,7 +450,7 @@ function EditPersonalModal({
       footer={
         <>
           <Button onClick={onClose}>Abbrechen</Button>
-          <Button variant="primary" onClick={save}>
+          <Button variant="primary" onClick={() => void save()}>
             Speichern
           </Button>
         </>
@@ -455,23 +463,26 @@ function EditPersonalModal({
         <Field label="Nachname" required error={errors.lastName}>
           <TextInput value={form.lastName} invalid={Boolean(errors.lastName)} onChange={(event) => setForm({ ...form, lastName: event.target.value })} />
         </Field>
+        <Field label="Firma (optional)">
+          <TextInput value={form.companyName ?? ""} onChange={(event) => setForm({ ...form, companyName: event.target.value })} />
+        </Field>
         <Field label="Geburtsdatum">
-          <TextInput type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} />
+          <TextInput type="date" value={form.dateOfBirth ?? ""} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} />
         </Field>
         <Field label="Nationalität">
-          <TextInput value={form.nationality} onChange={(event) => setForm({ ...form, nationality: event.target.value })} />
+          <TextInput value={form.nationality ?? ""} onChange={(event) => setForm({ ...form, nationality: event.target.value })} />
         </Field>
         <Field label="Adresse" className="sm:col-span-2">
-          <TextInput value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} />
+          <TextInput value={form.address ?? ""} onChange={(event) => setForm({ ...form, address: event.target.value })} />
         </Field>
         <Field label="PLZ">
-          <TextInput value={form.postalCode} onChange={(event) => setForm({ ...form, postalCode: event.target.value })} />
+          <TextInput value={form.postalCode ?? ""} onChange={(event) => setForm({ ...form, postalCode: event.target.value })} />
         </Field>
-        <Field label="Ort">
-          <TextInput value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })} />
+        <Field label="Ort" required error={errors.city}>
+          <TextInput value={form.city ?? ""} invalid={Boolean(errors.city)} onChange={(event) => setForm({ ...form, city: event.target.value })} />
         </Field>
         <Field label="Land">
-          <TextInput value={form.country} onChange={(event) => setForm({ ...form, country: event.target.value })} />
+          <TextInput value={form.country ?? ""} onChange={(event) => setForm({ ...form, country: event.target.value })} />
         </Field>
       </div>
     </Modal>
@@ -487,50 +498,51 @@ function EditContactModal({
   open: boolean
   customer: Customer
   onClose: () => void
-  onSave: (patch: Partial<Customer>) => void
+  onSave: (patch: Record<string, unknown>) => Promise<boolean>
 }) {
   const [form, setForm] = useState(customer)
-  const [error, setError] = useState("")
+  const [errors, setErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (open) {
       setForm(customer)
-      setError("")
+      setErrors({})
     }
   }, [open, customer])
 
-  const save = () => {
-    if (!isEmail(form.email)) {
-      setError("Bitte geben Sie eine gültige E-Mail-Adresse ein.")
+  const save = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email)) {
+      setErrors({ email: "Bitte geben Sie eine gültige E-Mail-Adresse ein." })
       return
     }
-    onSave({ email: form.email.trim(), mobile: form.mobile.trim(), phone: form.phone.trim() })
-    onClose()
+    const ok = await onSave({ email: form.email.trim(), mobile: form.mobile || null, phone: form.phone || null })
+    if (ok) onClose()
   }
 
   return (
     <Modal
       open={open}
       title="Kontaktdaten bearbeiten"
+      subtitle="Die E-Mail-Adresse ist zugleich der Benutzername des Kundenzugangs."
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Abbrechen</Button>
-          <Button variant="primary" onClick={save}>
+          <Button variant="primary" onClick={() => void save()}>
             Speichern
           </Button>
         </>
       }
     >
       <div className="grid gap-4">
-        <Field label="E-Mail" required error={error}>
-          <TextInput type="email" value={form.email} invalid={Boolean(error)} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+        <Field label="E-Mail" required error={errors.email}>
+          <TextInput type="email" value={form.email} invalid={Boolean(errors.email)} onChange={(event) => setForm({ ...form, email: event.target.value })} />
         </Field>
         <Field label="Mobiltelefon">
-          <TextInput value={form.mobile} onChange={(event) => setForm({ ...form, mobile: event.target.value })} />
+          <TextInput value={form.mobile ?? ""} onChange={(event) => setForm({ ...form, mobile: event.target.value })} />
         </Field>
         <Field label="Telefon">
-          <TextInput value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
+          <TextInput value={form.phone ?? ""} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
         </Field>
       </div>
     </Modal>
@@ -546,18 +558,18 @@ function EditStatusModal({
   open: boolean
   customer: Customer
   onClose: () => void
-  onSave: (patch: Partial<Customer>) => void
+  onSave: (patch: Record<string, unknown>) => Promise<boolean>
 }) {
-  const [status, setStatus] = useState(customer.status)
+  const [status, setStatus] = useState(customer.customerStatus)
   const [kyc, setKyc] = useState(customer.kycStatus)
-  const [identifiedAt, setIdentifiedAt] = useState(customer.identifiedAt)
+  const [identifiedAt, setIdentifiedAt] = useState(customer.identifiedAt ?? "")
   const [confirm, setConfirm] = useState(false)
 
   useEffect(() => {
     if (open) {
-      setStatus(customer.status)
+      setStatus(customer.customerStatus)
       setKyc(customer.kycStatus)
-      setIdentifiedAt(customer.identifiedAt)
+      setIdentifiedAt(customer.identifiedAt ?? "")
     }
   }, [open, customer])
 
@@ -579,7 +591,7 @@ function EditStatusModal({
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Status">
-            <Select value={status} onChange={(event) => setStatus(event.target.value as Customer["status"])}>
+            <Select value={status} onChange={(event) => setStatus(event.target.value as Customer["customerStatus"])}>
               {customerStatusOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -605,13 +617,13 @@ function EditStatusModal({
       <ConfirmDialog
         open={confirm}
         title="Änderung speichern"
-        message="Möchten Sie diese Änderung wirklich speichern?"
+        message={`Status: ${customer.customerStatus} → ${status}. Möchten Sie diese Änderung wirklich speichern?`}
         confirmLabel="Ja, speichern"
         onCancel={() => setConfirm(false)}
-        onConfirm={() => {
-          onSave({ status, kycStatus: kyc, identifiedAt })
+        onConfirm={async () => {
           setConfirm(false)
-          onClose()
+          const ok = await onSave({ customerStatus: status, kycStatus: kyc, identifiedAt: identifiedAt || null })
+          if (ok) onClose()
         }}
       />
     </>
@@ -620,44 +632,60 @@ function EditStatusModal({
 
 function UploadModal({
   open,
+  customerId,
   onClose,
-  onUpload,
+  onUploaded,
 }: {
   open: boolean
+  customerId: number
   onClose: () => void
-  onUpload: (file: { filename: string; category: DocumentCategory; sizeKb: number }) => void
+  onUploaded: () => Promise<void>
 }) {
   const [file, setFile] = useState<{ filename: string; sizeKb: number } | null>(null)
-  const [category, setCategory] = useState<DocumentCategory>("vertraege")
+  const [category, setCategory] = useState<DocumentCategory>("CONTRACTS")
   const [error, setError] = useState("")
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (open) {
       setFile(null)
-      setCategory("vertraege")
+      setCategory("CONTRACTS")
       setError("")
     }
   }, [open])
 
+  const upload = async () => {
+    if (!file) {
+      setError("Bitte wählen Sie eine Datei aus.")
+      return
+    }
+    setBusy(true)
+    try {
+      await api.post(`/api/customers/${customerId}/documents`, {
+        filename: file.filename,
+        sizeKb: file.sizeKb,
+        category,
+      })
+      await onUploaded()
+      onClose()
+    } catch (caught) {
+      setError(caught instanceof ApiRequestError ? caught.message : "Upload fehlgeschlagen.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <Modal
       open={open}
-      title="Dokument hochladen"
+      title="Dokument hinterlegen"
+      subtitle="Der Prototyp speichert Name, Kategorie und Größe; die Ablage der Datei erfolgt über den Dokumentenspeicher."
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Abbrechen</Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              if (!file) {
-                setError("Bitte wählen Sie eine Datei aus.")
-                return
-              }
-              onUpload({ ...file, category })
-            }}
-          >
-            Hochladen
+          <Button variant="primary" disabled={busy} onClick={() => void upload()}>
+            Hinterlegen
           </Button>
         </>
       }
@@ -673,9 +701,9 @@ function UploadModal({
         {error && <p className="text-[13px] font-medium text-[var(--danger)]">{error}</p>}
         <Field label="Kategorie">
           <Select value={category} onChange={(event) => setCategory(event.target.value as DocumentCategory)}>
-            {Object.entries(categoryLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
+            {documentCategoryOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </Select>
@@ -687,18 +715,21 @@ function UploadModal({
 
 function MessageModal({
   open,
+  customerId,
   customerName,
   onClose,
-  onSend,
+  onSent,
 }: {
   open: boolean
+  customerId: number
   customerName: string
   onClose: () => void
-  onSend: (subject: string, body: string) => void
+  onSent: () => Promise<void>
 }) {
   const [subject, setSubject] = useState("")
   const [body, setBody] = useState("")
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -707,6 +738,21 @@ function MessageModal({
       setErrors({})
     }
   }, [open])
+
+  const send = async () => {
+    setBusy(true)
+    try {
+      await api.post(`/api/customers/${customerId}/messages`, { subject, body })
+      await onSent()
+      onClose()
+    } catch (caught) {
+      if (caught instanceof ApiRequestError) {
+        setErrors(Object.keys(caught.details).length ? caught.details : { form: caught.message })
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <Modal
@@ -717,17 +763,7 @@ function MessageModal({
       footer={
         <>
           <Button onClick={onClose}>Abbrechen</Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              const found: Record<string, string> = {}
-              if (!subject.trim()) found.subject = "Bitte geben Sie einen Betreff ein."
-              if (body.trim().length < 5) found.body = "Bitte formulieren Sie eine Nachricht."
-              setErrors(found)
-              if (Object.keys(found).length) return
-              onSend(subject.trim(), body.trim())
-            }}
-          >
+          <Button variant="primary" disabled={busy} onClick={() => void send()}>
             Senden
           </Button>
         </>
@@ -740,6 +776,7 @@ function MessageModal({
         <Field label="Nachricht" required error={errors.body}>
           <Textarea rows={5} value={body} invalid={Boolean(errors.body)} onChange={(event) => setBody(event.target.value)} />
         </Field>
+        {errors.form && <p className="text-[13px] font-medium text-[var(--danger)]">{errors.form}</p>}
       </div>
     </Modal>
   )

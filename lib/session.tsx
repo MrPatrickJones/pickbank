@@ -1,92 +1,66 @@
 "use client"
 
 import type React from "react"
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 
+import { api } from "@/lib/api"
 import type { Role, SessionUser } from "@/lib/types"
 
 /**
- * Session handling for the prototype: role, idle timeout and the permission
- * checks the UI uses. Credentials are never stored, and the demo accounts below
- * carry no secrets – a real deployment authenticates on the server and keeps
- * the session in an http-only cookie.
+ * The session lives in an http-only cookie on the server; the client only
+ * mirrors who is signed in. Permissions shown here mirror the server rules –
+ * the server enforces them on every request regardless.
  */
-
-const STORAGE_KEY = "ptb.portal.session.v1"
-export const IDLE_TIMEOUT_MINUTES = 15
-
-export type DemoAccount = SessionUser & { hint: string; description: string }
-
-/** Staff logins of the prototype. Customer logins live in the data store and are issued by staff. */
-export const staffAccounts: DemoAccount[] = [
-  {
-    name: "Patrick Jones",
-    email: "admin@pickthebank.eu",
-    role: "admin",
-    hint: "Voller Zugriff inklusive Einstellungen und Benutzerverwaltung.",
-    description: "Administrator",
-  },
-  {
-    name: "Sandra Vogt",
-    email: "mitarbeiter@pickthebank.eu",
-    role: "mitarbeiter",
-    hint: "Kunden und Anlagen bearbeiten, keine Systemeinstellungen.",
-    description: "Mitarbeiterin Kundenbetreuung",
-  },
-]
-
-/** Kept for compatibility with existing imports. */
-export const demoAccounts = staffAccounts
 
 export type Permission =
   | "customers.read"
   | "customers.write"
-  | "customers.deactivate"
-  | "investments.write"
+  | "customers.delete"
+  | "accounts.write"
   | "documents.write"
   | "messages.send"
-  | "accounts.manage"
+  | "logins.manage"
+  | "audit.read"
   | "settings.manage"
-  | "users.manage"
 
 const rolePermissions: Record<Role, Permission[]> = {
-  admin: [
+  ADMIN: [
     "customers.read",
     "customers.write",
-    "customers.deactivate",
-    "investments.write",
+    "customers.delete",
+    "accounts.write",
     "documents.write",
     "messages.send",
-    "accounts.manage",
+    "logins.manage",
+    "audit.read",
     "settings.manage",
-    "users.manage",
   ],
-  mitarbeiter: [
+  STAFF: [
     "customers.read",
     "customers.write",
-    "investments.write",
+    "accounts.write",
     "documents.write",
     "messages.send",
-    "accounts.manage",
+    "logins.manage",
+    "audit.read",
   ],
-  kunde: [],
+  CUSTOMER: [],
 }
 
 export const roleLabel: Record<Role, string> = {
-  admin: "Administrator",
-  mitarbeiter: "Mitarbeiter",
-  kunde: "Kunde",
+  ADMIN: "Administrator",
+  STAFF: "Mitarbeiter",
+  CUSTOMER: "Kunde",
 }
 
 type SessionContextValue = {
   ready: boolean
   user: SessionUser | null
-  signIn: (user: SessionUser) => void
-  signOut: (reason?: "manual" | "timeout") => void
-  signOutReason: "manual" | "timeout" | null
-  clearSignOutReason: () => void
+  signIn: (email: string, password: string) => Promise<SessionUser>
+  signOut: () => Promise<void>
+  refresh: () => Promise<void>
   can: (permission: Permission) => boolean
-  minutesLeft: number
+  signOutReason: "manual" | "expired" | null
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null)
@@ -94,63 +68,48 @@ const SessionContext = createContext<SessionContextValue | null>(null)
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [ready, setReady] = useState(false)
-  const [signOutReason, setSignOutReason] = useState<"manual" | "timeout" | null>(null)
-  const [minutesLeft, setMinutesLeft] = useState(IDLE_TIMEOUT_MINUTES)
-  const lastActivity = useRef(Date.now())
+  const [signOutReason, setSignOutReason] = useState<"manual" | "expired" | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await api.get<{ user: SessionUser | null }>("/api/auth/session")
+      setUser((current) => {
+        if (current && !data.user) setSignOutReason("expired")
+        return data.user
+      })
+    } catch {
+      setUser(null)
+    } finally {
+      setReady(true)
+    }
+  }, [])
 
   useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem(STORAGE_KEY)
-      if (raw) setUser(JSON.parse(raw) as SessionUser)
-    } catch {
-      // blocked storage – start signed out
-    }
-    setReady(true)
-  }, [])
+    void refresh()
+  }, [refresh])
 
-  const signIn = useCallback((next: SessionUser) => {
-    lastActivity.current = Date.now()
-    setUser(next)
-    setSignOutReason(null)
-    try {
-      window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-    } catch {
-      // ignore
-    }
-  }, [])
-
-  const signOut = useCallback((reason: "manual" | "timeout" = "manual") => {
-    setUser(null)
-    setSignOutReason(reason)
-    try {
-      window.sessionStorage.removeItem(STORAGE_KEY)
-    } catch {
-      // ignore
-    }
-  }, [])
-
-  // Automatic sign-out after inactivity.
+  // The server expires idle sessions; the client notices on the next poll.
   useEffect(() => {
     if (!user) return
+    const timer = window.setInterval(() => void refresh(), 60_000)
+    return () => window.clearInterval(timer)
+  }, [user, refresh])
 
-    const touch = () => {
-      lastActivity.current = Date.now()
+  const signIn = useCallback(async (email: string, password: string) => {
+    const data = await api.post<{ user: SessionUser }>("/api/auth/login", { email, password })
+    setUser(data.user)
+    setSignOutReason(null)
+    return data.user
+  }, [])
+
+  const signOut = useCallback(async () => {
+    try {
+      await api.post("/api/auth/logout")
+    } finally {
+      setUser(null)
+      setSignOutReason("manual")
     }
-    const events: (keyof WindowEventMap)[] = ["pointerdown", "keydown", "scroll", "focus"]
-    events.forEach((event) => window.addEventListener(event, touch, { passive: true }))
-
-    const timer = window.setInterval(() => {
-      const idleMs = Date.now() - lastActivity.current
-      const left = Math.max(0, IDLE_TIMEOUT_MINUTES - Math.floor(idleMs / 60000))
-      setMinutesLeft(left)
-      if (idleMs >= IDLE_TIMEOUT_MINUTES * 60000) signOut("timeout")
-    }, 20000)
-
-    return () => {
-      events.forEach((event) => window.removeEventListener(event, touch))
-      window.clearInterval(timer)
-    }
-  }, [user, signOut])
+  }, [])
 
   const value = useMemo<SessionContextValue>(
     () => ({
@@ -158,12 +117,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       user,
       signIn,
       signOut,
+      refresh,
       signOutReason,
-      clearSignOutReason: () => setSignOutReason(null),
       can: (permission) => (user ? rolePermissions[user.role].includes(permission) : false),
-      minutesLeft,
     }),
-    [ready, user, signIn, signOut, signOutReason, minutesLeft],
+    [ready, user, signIn, signOut, refresh, signOutReason],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

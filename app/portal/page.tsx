@@ -5,21 +5,18 @@ import { useRouter } from "next/navigation"
 
 import { CustomerDashboard } from "@/components/customer/customer-dashboard"
 import { useSession } from "@/lib/session"
-import { useData } from "@/lib/store"
 
 export default function PortalPage() {
   const router = useRouter()
   const { ready, user } = useSession()
-  const { ready: dataReady } = useData()
 
-  // Role guard: staff are sent to the administration instead.
   useEffect(() => {
     if (!ready) return
     if (!user) router.replace("/login")
-    else if (user.role !== "kunde") router.replace("/admin")
+    else if (user.role !== "CUSTOMER") router.replace("/admin")
   }, [ready, user, router])
 
-  if (!ready || !dataReady || !user || user.role !== "kunde") {
+  if (!ready || !user || user.role !== "CUSTOMER") {
     return <div className="flex min-h-screen items-center justify-center text-sm text-[var(--muted)]">Wird geladen …</div>
   }
 

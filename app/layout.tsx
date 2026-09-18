@@ -3,7 +3,6 @@ import type React from "react"
 import { Instrument_Sans } from "next/font/google"
 
 import { ToastProvider } from "@/components/ui/overlays"
-import { DataProvider } from "@/lib/store"
 import { SessionProvider } from "@/lib/session"
 import "./globals.css"
 
@@ -15,8 +14,8 @@ const sans = Instrument_Sans({
 
 export const metadata: Metadata = {
   title: "Pick The Bank · Kundenportal",
-  description:
-    "Kundenportal und Verwaltung von Pick The Bank: Kunden, Festgeldanlagen, Dokumente und Aktivitäten an einem Ort.",
+  description: "Kundenportal und Verwaltung von Pick The Bank.",
+  robots: { index: false, follow: false },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -24,9 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="de" className={sans.className}>
       <body>
         <SessionProvider>
-          <DataProvider>
-            <ToastProvider>{children}</ToastProvider>
-          </DataProvider>
+          <ToastProvider>{children}</ToastProvider>
         </SessionProvider>
       </body>
     </html>
