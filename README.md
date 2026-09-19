@@ -1,5 +1,10 @@
 # Pick The Bank · Kundenportal
 
+> **Sie sollen das Portal einrichten?**
+> → **[HANDOVER.md](HANDOVER.md)** ist Ihr Startpunkt: Zugänge, die Verknüpfung
+> mit cPanel, die Reihenfolge der Arbeiten und die Abnahmecheckliste.
+> Schritt für Schritt durch Namecheap cPanel: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
 Kundenportal und Verwaltung für Festgeldanlagen – Next.js-Frontend mit eigenem
 Backend (REST-API, MySQL, Sessions, Rollen, Audit-Log).
 
