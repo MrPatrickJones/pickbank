@@ -33,9 +33,17 @@ export function formatDateTime(iso: string | null | undefined) {
   )}`
 }
 
-export function formatFileSize(sizeKb: number) {
-  if (sizeKb >= 1024) return `${(sizeKb / 1024).toFixed(1).replace(".", ",")} MB`
-  return `${Math.round(sizeKb)} KB`
+export function formatFileSize(sizeBytes: number) {
+  if (!sizeBytes) return "–"
+  const kilobytes = sizeBytes / 1024
+  if (kilobytes >= 1024) return `${(kilobytes / 1024).toFixed(1).replace(".", ",")} MB`
+  return `${Math.max(1, Math.round(kilobytes))} KB`
+}
+
+/** Dateiendung als Kurzform, etwa „PDF". */
+export function fileTypeOf(filename: string) {
+  const index = filename.lastIndexOf(".")
+  return index === -1 ? "Datei" : filename.slice(index + 1).toUpperCase()
 }
 
 export function initialsOf(firstName: string, lastName: string) {

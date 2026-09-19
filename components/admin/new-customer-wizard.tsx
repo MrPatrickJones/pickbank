@@ -10,6 +10,8 @@ import { Modal, useToast } from "@/components/ui/overlays"
 import { ApiRequestError, api } from "@/lib/api"
 import { formatAmount, formatDate, formatPercent, parseAmountInput } from "@/lib/format"
 import { accountStatusOptions, customerStatusOptions, interestMethodOptions, kycStatusOptions } from "@/lib/labels"
+import { useResource } from "@/lib/use-resource"
+import type { Bank } from "@/lib/types"
 import type { Customer } from "@/lib/types"
 
 const DRAFT_KEY = "ptb.customer-draft.v2"
@@ -42,6 +44,7 @@ type Draft = {
   createLogin: boolean
   withAccount: boolean
   productName: string
+  bankId: string
   principalAmount: string
   currency: string
   interestRate: string
@@ -72,6 +75,7 @@ const emptyDraft: Draft = {
   createLogin: true,
   withAccount: true,
   productName: "Festgeld",
+  bankId: "",
   principalAmount: "",
   currency: "EUR",
   interestRate: "3,25",
@@ -92,6 +96,8 @@ export function NewCustomerWizard({
   onCreated: (customerId: number) => void
 }) {
   const toast = useToast()
+  const { data: bankData } = useResource<{ banks: Bank[] }>(() => api.get<{ banks: Bank[] }>("/api/banks"))
+  const banks = bankData?.banks ?? []
   const [step, setStep] = useState(1)
   const [draft, setDraft] = useState<Draft>(emptyDraft)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -155,6 +161,7 @@ export function NewCustomerWizard({
       if (!draft.mobile.trim() && !draft.phone.trim()) found.mobile = "Bitte hinterlegen Sie mindestens eine Rufnummer."
     }
     if (target >= 4 && draft.withAccount) {
+      if (!draft.bankId) found.bankId = "Bitte wählen Sie eine Bank aus."
       const amount = Number(parseAmountInput(draft.principalAmount || "0"))
       const rate = Number(draft.interestRate.replace(",", "."))
       if (!Number.isFinite(amount) || amount <= 0) found.principalAmount = "Bitte geben Sie einen gültigen Anlagebetrag ein."
@@ -201,6 +208,7 @@ export function NewCustomerWizard({
 
       if (draft.withAccount) {
         await api.post(`/api/customers/${created.customer.id}/accounts`, {
+          bankId: Number(draft.bankId),
           productName: draft.productName,
           principalAmount: parseAmountInput(draft.principalAmount),
           currency: draft.currency,
@@ -237,7 +245,13 @@ export function NewCustomerWizard({
         if (Object.keys(caught.details).length) {
           setErrors(caught.details)
           if (caught.details.email) setStep(2)
-          else if (caught.details.principalAmount || caught.details.interestRate || caught.details.startDate) setStep(4)
+          else if (
+            caught.details.bankId ||
+            caught.details.principalAmount ||
+            caught.details.interestRate ||
+            caught.details.startDate
+          )
+            setStep(4)
         } else {
           setErrors({ form: caught.message })
         }
@@ -427,6 +441,22 @@ export function NewCustomerWizard({
 
           {draft.withAccount && (
             <>
+              <Field
+                label="Bank"
+                required
+                error={errors.bankId}
+                className="sm:col-span-2"
+                hint="Aus der zentralen Bankverwaltung – Name und Logo sieht später der Kunde."
+              >
+                <Select value={draft.bankId} invalid={Boolean(errors.bankId)} onChange={(event) => set("bankId", event.target.value)}>
+                  <option value="">Bitte wählen</option>
+                  {banks.map((bank) => (
+                    <option key={bank.id} value={bank.id}>
+                      {bank.name} · {bank.country}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
               <Field label="Produktname">
                 <TextInput value={draft.productName} onChange={(event) => set("productName", event.target.value)} />
               </Field>
@@ -519,6 +549,7 @@ export function NewCustomerWizard({
             rows={
               draft.withAccount
                 ? [
+                    ["Bank", banks.find((bank) => String(bank.id) === draft.bankId)?.name ?? "–"],
                     ["Produkt", draft.productName],
                     ["Betrag", formatAmount(parseAmountInput(draft.principalAmount || "0"), draft.currency)],
                     ["Zinssatz", formatPercent(draft.interestRate.replace(",", "."))],

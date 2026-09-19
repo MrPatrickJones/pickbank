@@ -8,9 +8,11 @@ import { ConfirmDialog, Modal, useToast } from "@/components/ui/overlays"
 import { ApiRequestError, api } from "@/lib/api"
 import { formatAmount, formatPercent, parseAmountInput } from "@/lib/format"
 import { accountStatusOptions, interestMethodOptions } from "@/lib/labels"
-import type { Account } from "@/lib/types"
+import { useResource } from "@/lib/use-resource"
+import type { Account, Bank } from "@/lib/types"
 
 type FormState = {
+  bankId: string
   productName: string
   principalAmount: string
   currency: string
@@ -26,6 +28,7 @@ type FormState = {
 }
 
 const toForm = (account?: Account | null): FormState => ({
+  bankId: account?.bank ? String(account.bank.id) : "",
   productName: account?.productName ?? "Festgeld",
   principalAmount: account ? account.principalAmount.replace(".", ",") : "",
   currency: account?.currency ?? "EUR",
@@ -66,6 +69,9 @@ export function AccountForm({
   onSaved: () => void
 }) {
   const toast = useToast()
+  // Die Bankenliste kommt zentral aus der Bankverwaltung.
+  const { data: bankData } = useResource<{ banks: Bank[] }>(() => api.get<{ banks: Bank[] }>("/api/banks"))
+  const banks = bankData?.banks ?? []
   const [form, setForm] = useState<FormState>(() => toForm(account))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [confirm, setConfirm] = useState(false)
@@ -106,7 +112,10 @@ export function AccountForm({
     return ((principal * rate) / 100 / 12) * term
   }, [form.principalAmount, form.interestRate, form.termMonths])
 
+  const selectedBank = banks.find((bank) => String(bank.id) === form.bankId) ?? null
+
   const payload = () => ({
+    bankId: Number(form.bankId),
     productName: form.productName,
     principalAmount: parseAmountInput(form.principalAmount),
     currency: form.currency,
@@ -122,6 +131,11 @@ export function AccountForm({
   })
 
   const save = async () => {
+    if (!form.bankId) {
+      setConfirm(false)
+      setErrors({ bankId: "Bitte wählen Sie eine Bank aus." })
+      return
+    }
     setBusy(true)
     try {
       if (account) {
@@ -164,6 +178,45 @@ export function AccountForm({
         }
       >
         <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Bank"
+            required
+            error={errors.bankId}
+            className="sm:col-span-2"
+            hint="Name und Logo stammen aus der Bankverwaltung und erscheinen beim Kunden."
+          >
+            <Select
+              value={form.bankId}
+              invalid={Boolean(errors.bankId)}
+              onChange={(event) => set("bankId", event.target.value)}
+            >
+              <option value="">Bitte wählen</option>
+              {banks.map((bank) => (
+                <option key={bank.id} value={bank.id}>
+                  {bank.name} · {bank.country}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          {selectedBank && (
+            <div className="sm:col-span-2 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--line)] bg-white px-4 py-3">
+              {selectedBank.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={selectedBank.logoUrl} alt="" className="h-8 w-auto max-w-[120px] object-contain" />
+              ) : (
+                <span className="grid h-8 w-8 place-items-center rounded-md bg-[var(--accent-soft)] text-[12px] font-semibold text-[var(--accent)]">
+                  {selectedBank.name.slice(0, 2).toUpperCase()}
+                </span>
+              )}
+              <span className="text-[13px] text-[var(--body)]">
+                <strong className="text-[var(--ink)]">{selectedBank.name}</strong>
+                {selectedBank.city ? `, ${selectedBank.city}` : ""} · {selectedBank.country}
+                {selectedBank.bic ? ` · BIC ${selectedBank.bic}` : ""}
+              </span>
+            </div>
+          )}
+
           <Field label="Produktname" required error={errors.productName}>
             <TextInput value={form.productName} invalid={Boolean(errors.productName)} onChange={(event) => set("productName", event.target.value)} />
           </Field>

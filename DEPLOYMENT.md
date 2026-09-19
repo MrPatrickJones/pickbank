@@ -23,6 +23,11 @@ Auf cPanel läuft sie über **Setup Node.js App** (Passenger).
 
 1. cPanel → **Domains → Create A New Domain**: `portal.pickbank.de`
    Dokumentstamm z. B. `/home/cpaneluser/portal.pickbank.de`
+
+   Legen Sie zusätzlich ein Verzeichnis für hochgeladene Dateien an, das
+   **außerhalb** des Dokumentstamms liegt, etwa `/home/cpaneluser/ptb-storage`,
+   und tragen Sie es als `STORAGE_DIR` in die `.env` ein. Liegt die Ablage im
+   Webroot, wären Ausweise und Verträge über eine URL abrufbar.
 2. cPanel → **SSL/TLS Status**: Zertifikat (AutoSSL / Let's Encrypt) ausstellen
 3. cPanel → **Domains → Force HTTPS Redirect** aktivieren
 

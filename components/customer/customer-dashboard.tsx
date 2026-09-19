@@ -6,31 +6,56 @@ import { useRouter } from "next/navigation"
 
 import { Icon } from "@/components/admin/icons"
 import { ChangePasswordModal } from "@/components/admin/settings-view"
-import { AccountStatusBadge, Button, Card, EmptyState, ErrorState, LoadingState } from "@/components/ui/primitives"
+import { CustomerDocuments } from "@/components/customer/documents-view"
+import { InvestmentDetail, InvestmentList } from "@/components/customer/investments"
+import { CustomerProfile } from "@/components/customer/profile-view"
+import { Button, Card, ErrorState, LoadingState } from "@/components/ui/primitives"
 import { useToast } from "@/components/ui/overlays"
 import { api } from "@/lib/api"
 import { daysUntil, formatAmount, formatDate, formatDateTime, formatPercent } from "@/lib/format"
-import { documentCategoryLabels, interestMethodLabels } from "@/lib/labels"
+import { documentCategoryLabels, documentCategoryOptions } from "@/lib/labels"
 import { useSession } from "@/lib/session"
 import { useResource } from "@/lib/use-resource"
-import type { CustomerPortalData } from "@/lib/types"
+import type { Account, CustomerPortalData } from "@/lib/types"
+
+type View = "overview" | "investments" | "documents" | "profile" | "messages"
+
+const NAV: { id: View; label: string }[] = [
+  { id: "overview", label: "Übersicht" },
+  { id: "investments", label: "Meine Festgeldanlagen" },
+  { id: "documents", label: "Meine Dokumente" },
+  { id: "profile", label: "Meine Daten" },
+  { id: "messages", label: "Nachrichten" },
+]
 
 /**
- * The customer view is deliberately plain: the deposits, the documents and the
- * messages – nothing else. Everything shown here is read-only.
+ * Die digitale Kundenakte. Alles, was der Kunde sieht, gehört ihm – die Daten
+ * kommen aus /api/me, das ausschliesslich die eigene Akte ausliefert. Ändern
+ * kann der Kunde nur sein Passwort und seine eigenen Dokumente.
  */
 export function CustomerDashboard() {
   const router = useRouter()
   const { signOut } = useSession()
   const toast = useToast()
+
+  const [view, setView] = useState<View>("overview")
+  const [openAccount, setOpenAccount] = useState<Account | null>(null)
   const [passwordOpen, setPasswordOpen] = useState(false)
 
   const { data, loading, error, reload } = useResource<CustomerPortalData>(() => api.get<CustomerPortalData>("/api/me"))
 
+  const go = (next: View) => {
+    setView(next)
+    setOpenAccount(null)
+    window.scrollTo({ top: 0 })
+  }
+
+  const unread = data?.messages.filter((message) => !message.readAt).length ?? 0
+
   return (
     <div className="min-h-screen bg-white">
-      <header className="border-b border-[var(--line)] bg-white">
-        <div className="mx-auto flex max-w-[860px] flex-wrap items-center gap-4 px-4 py-4 sm:px-6">
+      <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-white">
+        <div className="mx-auto flex max-w-[1100px] flex-wrap items-center gap-4 px-4 py-4 sm:px-6">
           <a
             href="https://www.pickthebank.eu"
             target="_blank"
@@ -56,11 +81,42 @@ export function CustomerDashboard() {
             Abmelden
           </Button>
         </div>
+
+        <nav className="mx-auto flex max-w-[1100px] gap-1 overflow-x-auto px-2 sm:px-4">
+          {NAV.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => go(item.id)}
+              aria-current={view === item.id}
+              className={`flex-none whitespace-nowrap border-b-2 px-3 py-3 text-[13.5px] transition-colors ${
+                view === item.id
+                  ? "border-[var(--accent)] font-semibold text-[var(--accent)]"
+                  : "border-transparent font-medium text-[var(--muted)] hover:text-[var(--ink)]"
+              }`}
+            >
+              {item.label}
+              {item.id === "messages" && unread > 0 && (
+                <span className="num ml-1.5 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--accent)]">
+                  {unread}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
       </header>
 
-      <main className="mx-auto max-w-[860px] space-y-6 px-4 py-8 sm:px-6">
-        {loading && !data && <Card><LoadingState /></Card>}
-        {error && <Card><ErrorState message={error} onRetry={reload} /></Card>}
+      <main className="mx-auto max-w-[1100px] space-y-6 px-4 py-8 sm:px-6">
+        {loading && !data && (
+          <Card>
+            <LoadingState />
+          </Card>
+        )}
+        {error && (
+          <Card>
+            <ErrorState message={error} onRetry={reload} />
+          </Card>
+        )}
 
         {data && (
           <>
@@ -75,147 +131,54 @@ export function CustomerDashboard() {
               </div>
             )}
 
-            <div>
-              <h1 className="text-[26px] font-semibold tracking-tight text-[var(--ink)]">
-                Guten Tag, {data.customer.firstName}
-              </h1>
-              <p className="mt-1.5 text-[14.5px] text-[var(--muted)]">Ihre Festgeldanlagen bei Pick The Bank.</p>
-            </div>
+            {view === "overview" && (
+              <Overview
+                data={data}
+                onOpenAccount={(account) => {
+                  setView("investments")
+                  setOpenAccount(account)
+                }}
+                onNavigate={go}
+              />
+            )}
 
-            {/* One headline figure, three facts – the whole summary. */}
-            <section className="rounded-2xl border border-[var(--line)] bg-white px-6 py-6 shadow-card">
-              <p className="text-[12.5px] font-medium uppercase tracking-[0.08em] text-[var(--muted)]">Ihre Anlagesumme</p>
-              <p className="num mt-2 text-[40px] font-semibold leading-none tracking-tight text-[var(--ink)]">
-                {formatAmount(data.totals.principal, "EUR", 0)}
-              </p>
-              <dl className="mt-6 grid gap-5 border-t border-[var(--line-soft)] pt-5 sm:grid-cols-3">
-                {[
-                  ["Zinssatz", formatPercent(data.totals.averageRate)],
-                  ["Nächste Fälligkeit", data.totals.nextMaturity ? formatDate(data.totals.nextMaturity) : "–"],
-                  ["Zinsertrag bei Laufzeitende", formatAmount(data.totals.expectedInterest, "EUR", 0)],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <dt className="text-[12.5px] text-[var(--muted)]">{label}</dt>
-                    <dd className="num mt-1 text-[18px] font-semibold text-[var(--ink)]">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="text-[15px] font-semibold text-[var(--ink)]">
-                {data.accounts.length === 1 ? "Ihre Anlage" : "Ihre Anlagen"}
-              </h2>
-
-              {data.accounts.length === 0 ? (
-                <Card>
-                  <EmptyState title="Noch keine Anlage" hint="Ihre Betreuung meldet sich bei Ihnen." />
-                </Card>
+            {view === "investments" &&
+              (openAccount ? (
+                <InvestmentDetail
+                  account={data.accounts.find((entry) => entry.id === openAccount.id) ?? openAccount}
+                  documents={data.documents}
+                  onBack={() => setOpenAccount(null)}
+                />
               ) : (
-                data.accounts.map((account) => {
-                  const days = daysUntil(account.maturityDate)
-                  return (
-                    <article key={account.id} className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-card">
-                      <div className="flex flex-wrap items-start justify-between gap-4 px-6 py-5">
-                        <div>
-                          <p className="text-[12.5px] font-medium uppercase tracking-[0.08em] text-[var(--muted)]">
-                            {account.productName}
-                          </p>
-                          <p className="num mt-1.5 text-[28px] font-semibold leading-none tracking-tight text-[var(--ink)]">
-                            {formatAmount(account.principalAmount, account.currency, 0)}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="num text-[22px] font-semibold leading-none text-[var(--accent)]">
-                            {formatPercent(account.interestRate)}
-                          </p>
-                          <p className="mt-1 text-[12px] text-[var(--muted)]">Zinssatz p. a.</p>
-                        </div>
-                      </div>
+                <>
+                  <div>
+                    <h2 className="text-[18px] font-semibold text-[var(--ink)]">Meine Festgeldanlagen</h2>
+                    <p className="mt-1 text-[13.5px] text-[var(--muted)]">
+                      {data.accounts.length === 1
+                        ? "Eine Anlage in Ihrer Akte."
+                        : `${data.accounts.length} Anlagen in Ihrer Akte.`}
+                    </p>
+                  </div>
+                  <InvestmentList accounts={data.accounts} onOpen={setOpenAccount} />
+                </>
+              ))}
 
-                      <dl className="grid gap-x-6 gap-y-4 border-t border-[var(--line-soft)] px-6 py-5 sm:grid-cols-2 lg:grid-cols-4">
-                        {[
-                          ["Laufzeit", `${account.termMonths} Monate`],
-                          ["Zeitraum", `${formatDate(account.startDate)} – ${formatDate(account.maturityDate)}`],
-                          ["Zinszahlung", interestMethodLabels[account.interestPaymentMethod]],
-                          ["Zinsertrag bei Laufzeitende", formatAmount(account.interestAtMaturity, account.currency)],
-                        ].map(([label, value]) => (
-                          <div key={label}>
-                            <dt className="text-[11.5px] font-semibold uppercase tracking-[0.07em] text-[var(--faint)]">{label}</dt>
-                            <dd className="num mt-1 text-[14px] font-medium text-[var(--ink)]">{value}</dd>
-                          </div>
-                        ))}
-                      </dl>
-
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line-soft)] px-6 py-4">
-                        <span className="flex items-center gap-2 text-[13px] text-[var(--muted)]">
-                          <AccountStatusBadge status={account.status} />
-                          <span className="num">
-                            {days > 0 ? `noch ${days} Tage` : days === 0 ? "heute fällig" : `${Math.abs(days)} Tage über Fälligkeit`}
-                          </span>
-                        </span>
-                        <span className="num text-[12.5px] text-[var(--faint)]">
-                          Konto {account.accountNumber}
-                        </span>
-                      </div>
-                    </article>
-                  )
-                })
-              )}
-            </section>
-
-            {data.documents.length > 0 && (
-              <section className="space-y-3">
-                <h2 className="text-[15px] font-semibold text-[var(--ink)]">Ihre Dokumente</h2>
-                <Card>
-                  <ul className="divide-y divide-[var(--line-soft)]">
-                    {data.documents.map((document) => (
-                      <li key={document.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
-                        <span className="grid h-10 w-10 flex-none place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
-                          <Icon name="documents" />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-[14px] font-semibold text-[var(--ink)]">{document.filename}</div>
-                          <div className="text-[12.5px] text-[var(--muted)]">
-                            {documentCategoryLabels[document.category]} · {formatDate(document.uploadedAt.slice(0, 10))}
-                          </div>
-                        </div>
-                        <Button size="sm" onClick={() => toast("Der Download wird über Ihre Betreuung bereitgestellt.", "info")}>
-                          <Icon name="download" className="h-4 w-4" />
-                          Öffnen
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                </Card>
-              </section>
+            {view === "documents" && (
+              <CustomerDocuments documents={data.documents} accounts={data.accounts} onChanged={reload} />
             )}
 
-            {data.messages.length > 0 && (
-              <section className="space-y-3">
-                <h2 className="text-[15px] font-semibold text-[var(--ink)]">Nachrichten</h2>
-                <Card>
-                  <ul className="divide-y divide-[var(--line-soft)]">
-                    {data.messages.map((message) => (
-                      <li key={message.id} className="px-5 py-4">
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <span className="text-[14px] font-semibold text-[var(--ink)]">{message.subject}</span>
-                          <span className="num text-[12.5px] text-[var(--faint)]">{formatDateTime(message.sentAt)}</span>
-                        </div>
-                        <p className="mt-1.5 text-[13.5px] leading-relaxed text-[var(--body)]">{message.body}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </Card>
-              </section>
-            )}
+            {view === "profile" && <CustomerProfile customer={data.customer} />}
+
+            {view === "messages" && <Messages data={data} />}
 
             <section className="rounded-2xl border border-[var(--line)] bg-white px-6 py-5">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="text-[13px] leading-relaxed text-[var(--muted)]">
                   <p className="font-semibold text-[var(--ink)]">
                     {data.customer.firstName} {data.customer.lastName}
-                    <span className="num ml-2 font-normal text-[var(--muted)]">Kundennummer {data.customer.customerNumber}</span>
+                    <span className="num ml-2 font-normal text-[var(--muted)]">
+                      Kundennummer {data.customer.customerNumber}
+                    </span>
                   </p>
                   <p className="mt-1">
                     Änderungen an Ihren Daten und Anlagen nimmt Pick The Bank vor. Ihr Passwort ändern Sie selbst.
@@ -238,6 +201,154 @@ export function CustomerDashboard() {
           await reload()
         }}
       />
+    </div>
+  )
+}
+
+/** Die Startseite der Akte: wenige Zahlen, die nächste Fälligkeit, die Unterlagen. */
+function Overview({
+  data,
+  onOpenAccount,
+  onNavigate,
+}: {
+  data: CustomerPortalData
+  onOpenAccount: (account: Account) => void
+  onNavigate: (view: View) => void
+}) {
+  const next = [...data.accounts]
+    .filter((account) => daysUntil(account.maturityDate) >= 0)
+    .sort((a, b) => a.maturityDate.localeCompare(b.maturityDate))[0]
+
+  return (
+    <>
+      <div>
+        <h1 className="text-[26px] font-semibold tracking-tight text-[var(--ink)]">
+          Guten Tag, {data.customer.firstName}
+        </h1>
+        <p className="mt-1.5 text-[14.5px] text-[var(--muted)]">Ihre Festgeldanlagen bei Pick The Bank.</p>
+      </div>
+
+      <section className="rounded-2xl border border-[var(--line)] bg-white px-6 py-6 shadow-card">
+        <p className="text-[12.5px] font-medium uppercase tracking-[0.08em] text-[var(--muted)]">Ihre Anlagesumme</p>
+        <p className="num mt-2 text-[40px] font-semibold leading-none tracking-tight text-[var(--ink)]">
+          {formatAmount(data.totals.principal, "EUR", 0)}
+        </p>
+        <dl className="mt-6 grid gap-5 border-t border-[var(--line-soft)] pt-5 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            [
+              "Anlagen",
+              data.totals.accountCount === 1 ? "1 Anlage" : `${data.totals.accountCount} Anlagen`,
+            ],
+            ["Durchschnittlicher Zinssatz", formatPercent(data.totals.averageRate)],
+            ["Nächste Fälligkeit", data.totals.nextMaturity ? formatDate(data.totals.nextMaturity) : "–"],
+            ["Erwartete Gesamtzinsen", formatAmount(data.totals.expectedInterest, "EUR", 0)],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-[12.5px] text-[var(--muted)]">{label}</dt>
+              <dd className="num mt-1 text-[18px] font-semibold text-[var(--ink)]">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      {next && (
+        <Card title="Nächste Fälligkeit">
+          <button
+            type="button"
+            onClick={() => onOpenAccount(next)}
+            className="flex w-full flex-wrap items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-[var(--surface-sunken)]"
+          >
+            <div>
+              <p className="text-[14.5px] font-semibold text-[var(--ink)]">{next.bank?.name ?? next.productName}</p>
+              <p className="num mt-1 text-[13px] text-[var(--muted)]">
+                {formatAmount(next.principalAmount, next.currency, 0)} · {formatPercent(next.interestRate)} ·{" "}
+                {next.termMonths} Monate
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="num text-[16px] font-semibold text-[var(--ink)]">{formatDate(next.maturityDate)}</p>
+              <p className="num mt-1 text-[12.5px] text-[var(--muted)]">in {daysUntil(next.maturityDate)} Tagen</p>
+            </div>
+          </button>
+        </Card>
+      )}
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-[15px] font-semibold text-[var(--ink)]">
+            {data.accounts.length === 1 ? "Ihre Anlage" : "Ihre Anlagen"}
+          </h2>
+          {data.accounts.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onNavigate("investments")}
+              className="text-[13px] font-semibold text-[var(--accent)] hover:underline"
+            >
+              Alle ansehen
+            </button>
+          )}
+        </div>
+        <InvestmentList accounts={data.accounts} onOpen={onOpenAccount} />
+      </section>
+
+      <Card
+        title="Meine Dokumente"
+        subtitle={
+          data.documentCounts.total === 1
+            ? "1 Dokument in Ihrer Akte"
+            : `${data.documentCounts.total} Dokumente in Ihrer Akte`
+        }
+        action={
+          <Button size="sm" onClick={() => onNavigate("documents")}>
+            Öffnen
+          </Button>
+        }
+      >
+        <ul className="grid gap-x-6 gap-y-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-3">
+          {documentCategoryOptions.map((option) => (
+            <li key={option.value} className="flex items-baseline justify-between gap-3 text-[13.5px]">
+              <span className="text-[var(--muted)]">{documentCategoryLabels[option.value]}</span>
+              <span className="num font-semibold text-[var(--ink)]">
+                {data.documentCounts.byCategory[option.value] ?? 0}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </>
+  )
+}
+
+function Messages({ data }: { data: CustomerPortalData }) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-[18px] font-semibold text-[var(--ink)]">Nachrichten</h2>
+        <p className="mt-1 text-[13.5px] text-[var(--muted)]">Mitteilungen von Pick The Bank an Sie.</p>
+      </div>
+
+      {data.messages.length === 0 ? (
+        <Card>
+          <div className="px-5 py-14 text-center">
+            <p className="text-sm font-semibold text-[var(--ink)]">Keine Nachrichten</p>
+            <p className="mt-1.5 text-[13px] text-[var(--muted)]">Sobald wir Ihnen schreiben, erscheint es hier.</p>
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <ul className="divide-y divide-[var(--line-soft)]">
+            {data.messages.map((message) => (
+              <li key={message.id} className="px-5 py-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-[14px] font-semibold text-[var(--ink)]">{message.subject}</span>
+                  <span className="num text-[12.5px] text-[var(--faint)]">{formatDateTime(message.sentAt)}</span>
+                </div>
+                <p className="mt-1.5 text-[13.5px] leading-relaxed text-[var(--body)]">{message.body}</p>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
     </div>
   )
 }

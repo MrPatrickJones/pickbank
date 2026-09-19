@@ -1,32 +1,17 @@
-import { actorOf, writeAudit } from "@/server/audit"
-import { notFound } from "@/server/errors"
+import { deleteDocumentFor } from "@/server/document-service"
 import { assertCsrf, clientIp, handleError, json, parseId } from "@/server/http"
-import { queryOne } from "@/server/db"
-import { deleteDocument } from "@/server/repositories/misc"
-import { requireStaff } from "@/server/session"
+import { requireSession } from "@/server/session"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const session = await requireStaff()
+    const session = await requireSession()
     assertCsrf(request, session)
 
     const id = parseId((await context.params).id)
-    const document = await queryOne<{ id: number; customer_id: number; filename: string }>(
-      "SELECT id, customer_id, filename FROM documents WHERE id = ?",
-      [id],
-    )
-    if (!document) throw notFound("Das Dokument wurde nicht gefunden.")
-
-    await deleteDocument(id)
-    await writeAudit(actorOf(session.user), clientIp(request), {
-      action: "Dokument gelöscht",
-      description: `Dokument „${document.filename}" gelöscht.`,
-      customerId: document.customer_id,
-      oldValue: document.filename,
-    })
+    await deleteDocumentFor(session, id, clientIp(request))
 
     return json({ ok: true })
   } catch (error) {

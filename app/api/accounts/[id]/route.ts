@@ -1,8 +1,9 @@
-import { actorOf, writeFieldChanges } from "@/server/audit"
+import { actorOf, writeAudit, writeFieldChanges } from "@/server/audit"
 import { badRequest } from "@/server/errors"
 import { assertCsrf, clientIp, handleError, json, parseId, readJson } from "@/server/http"
 import { addMonths } from "@/server/money"
 import { requireAccountById, toAccountDto, updateAccount } from "@/server/repositories/accounts"
+import { requireBankById } from "@/server/repositories/banks"
 import { assertCustomerAccess, requireSession, requireStaff } from "@/server/session"
 import { accountUpdateSchema } from "@/server/validation"
 
@@ -45,6 +46,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const body = accountUpdateSchema.parse(await readJson(request))
     const { recalculateMaturity, ...patch } = body
 
+    // Ein Bankwechsel wird mit Namen protokolliert, nicht mit internen Nummern.
+    let bankChange: { from: string; to: string } | null = null
+    if (patch.bankId !== undefined && patch.bankId !== before.bank_id) {
+      const bank = await requireBankById(patch.bankId)
+      bankChange = { from: before.bank_name ?? "–", to: bank.name }
+    }
+
     // Dependent values are recalculated on the server, never trusted from the client.
     const startDate = patch.startDate ?? before.start_date
     const termMonths = patch.termMonths ?? Number(before.term_months)
@@ -67,6 +75,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     await updateAccount(id, patch)
     const after = await requireAccountById(id)
+
+    if (bankChange) {
+      await writeAudit(actorOf(session.user), clientIp(request), {
+        action: "Konto geändert",
+        description: `Bank des Kontos ${before.account_number} von „${bankChange.from}" auf „${bankChange.to}" geändert.`,
+        customerId: before.customer_id,
+        accountId: id,
+        bankId: after.bank_id,
+        changedField: "bankId",
+        oldValue: bankChange.from,
+        newValue: bankChange.to,
+      })
+    }
 
     await writeFieldChanges(
       actorOf(session.user),
@@ -92,7 +113,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         referenceAccount: before.reference_account,
         notes: before.notes,
       },
-      patch as Record<string, unknown>,
+      (({ bankId: _bankId, ...rest }) => rest)(patch) as Record<string, unknown>,
     )
 
     return json({ account: toAccountDto(after) })

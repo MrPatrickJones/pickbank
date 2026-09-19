@@ -167,16 +167,20 @@ export function useToast() {
 
 export function FileDrop({
   onFiles,
-  hint = "PDF, JPG oder PNG bis 10 MB",
+  accept = ".pdf,.jpg,.jpeg,.png,.docx",
+  multiple = false,
+  hint = "PDF, JPG, PNG oder DOCX bis 10 MB",
 }: {
-  onFiles: (files: { filename: string; sizeKb: number }[]) => void
+  onFiles: (files: File[]) => void
+  accept?: string
+  multiple?: boolean
   hint?: string
 }) {
   const [over, setOver] = useState(false)
 
   const handle = (list: FileList | null) => {
     if (!list?.length) return
-    onFiles(Array.from(list).map((file) => ({ filename: file.name, sizeKb: Math.max(1, Math.round(file.size / 1024)) })))
+    onFiles(Array.from(list))
   }
 
   return (
@@ -201,7 +205,13 @@ export function FileDrop({
       </svg>
       <span className="text-[13.5px] font-semibold text-[var(--ink)]">Datei auswählen oder hierher ziehen</span>
       <span className="text-[12.5px] text-[var(--muted)]">{hint}</span>
-      <input type="file" multiple className="hidden" onChange={(event) => handle(event.target.files)} />
+      <input
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        className="hidden"
+        onChange={(event) => handle(event.target.files)}
+      />
     </label>
   )
 }

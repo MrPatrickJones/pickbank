@@ -8,6 +8,8 @@ export type AuditEntry = {
   description: string
   customerId?: number | null
   accountId?: number | null
+  bankId?: number | null
+  documentId?: number | null
   changedField?: string | null
   oldValue?: string | null
   newValue?: string | null
@@ -25,8 +27,8 @@ export async function writeAudit(
   await execute(
     `INSERT INTO audit_logs
        (user_id, user_role, user_label, action, description, affected_customer_id, affected_account_id,
-        changed_field, old_value, new_value, ip_address)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        affected_bank_id, affected_document_id, changed_field, old_value, new_value, ip_address)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       actor.id,
       actor.role,
@@ -35,6 +37,8 @@ export async function writeAudit(
       entry.description.slice(0, 500),
       entry.customerId ?? null,
       entry.accountId ?? null,
+      entry.bankId ?? null,
+      entry.documentId ?? null,
       entry.changedField?.slice(0, 80) ?? null,
       entry.oldValue?.slice(0, 255) ?? null,
       entry.newValue?.slice(0, 255) ?? null,
@@ -51,7 +55,13 @@ export function actorOf(user: AuthUser) {
 export async function writeFieldChanges(
   actor: { id: number | null; role: "ADMIN" | "STAFF" | "CUSTOMER" | "SYSTEM"; label: string },
   ip: string | null,
-  base: { action: string; subject: string; customerId?: number | null; accountId?: number | null },
+  base: {
+    action: string
+    subject: string
+    customerId?: number | null
+    accountId?: number | null
+    bankId?: number | null
+  },
   labels: Record<string, string>,
   before: Record<string, unknown>,
   after: Record<string, unknown>,
@@ -67,6 +77,7 @@ export async function writeFieldChanges(
       description: `${label} ${base.subject} von „${format(oldValue)}" auf „${format(newValue)}" geändert.`,
       customerId: base.customerId ?? null,
       accountId: base.accountId ?? null,
+      bankId: base.bankId ?? null,
       changedField: field,
       oldValue: format(oldValue),
       newValue: format(newValue),

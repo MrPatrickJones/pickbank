@@ -3,8 +3,36 @@ import "server-only"
 import { execute, isDuplicateKeyError, query, queryOne, type SqlValue } from "@/server/db"
 import { conflict, notFound } from "@/server/errors"
 import { accruedInterest, addAmounts, interestAtMaturity, today } from "@/server/money"
+import { toBankRef } from "@/server/repositories/banks"
 
-export type AccountRow = {
+/** Status, bei denen Kapital als angelegt gilt (Spiegel von lib/labels.ts). */
+export const LIVE_STATUSES = ["PENDING", "IN_PROGRESS", "ACTIVE", "MATURED"] as const
+
+export type AccountStatusValue =
+  | "DRAFT"
+  | "KYC_PENDING"
+  | "DOCS_PENDING"
+  | "IN_PROGRESS"
+  | "PENDING"
+  | "ACTIVE"
+  | "MATURED"
+  | "PAID_OUT"
+  | "CLOSED"
+  | "CANCELLED"
+
+/** Bankfelder, die bei jeder Anlage mitgelesen werden. */
+export type AccountBankColumns = {
+  bank_id: number | null
+  bank_name: string | null
+  bank_country: string | null
+  bank_city: string | null
+  bank_address: string | null
+  bank_website: string | null
+  bank_bic: string | null
+  bank_logo_key: string | null
+}
+
+export type AccountRow = AccountBankColumns & {
   id: number
   customer_id: number
   account_number: string
@@ -15,7 +43,7 @@ export type AccountRow = {
   term_months: number
   start_date: string
   maturity_date: string
-  status: "PENDING" | "ACTIVE" | "MATURED" | "CLOSED" | "CANCELLED"
+  status: AccountStatusValue
   interest_payment_method: "AT_MATURITY" | "ANNUAL" | "QUARTERLY" | "MONTHLY"
   payout_date: string | null
   reference_account: string | null
@@ -24,16 +52,48 @@ export type AccountRow = {
   updated_at: Date
 }
 
-const COLUMNS = `id, customer_id, account_number, product_name, principal_amount, currency, interest_rate,
+const OWN_COLUMNS = `id, customer_id, bank_id, account_number, product_name, principal_amount, currency, interest_rate,
   term_months, start_date, maturity_date, status, interest_payment_method, payout_date, reference_account,
   notes, created_at, updated_at`
+
+/** Die Bank hängt immer mit dran, damit Name und Logo ohne Zweitabfrage vorliegen. */
+const BANK_COLUMNS = `b.name AS bank_name, b.country AS bank_country, b.city AS bank_city,
+  b.address AS bank_address, b.website AS bank_website, b.bic AS bank_bic, b.logo_key AS bank_logo_key`
+
+const SELECT_WITH_BANK = `SELECT ${OWN_COLUMNS
+  .split(",")
+  .map((column) => `a.${column.trim()}`)
+  .join(", ")}, ${BANK_COLUMNS}
+   FROM fixed_deposit_accounts a
+   LEFT JOIN banks b ON b.id = a.bank_id AND b.deleted_at IS NULL`
+
+export function bankOf(row: AccountBankColumns) {
+  if (!row.bank_id || !row.bank_name) return null
+  return toBankRef({
+    id: row.bank_id,
+    name: row.bank_name,
+    country: row.bank_country ?? "",
+    city: row.bank_city,
+    address: row.bank_address,
+    website: row.bank_website,
+    bic: row.bank_bic,
+    logo_key: row.bank_logo_key,
+  })
+}
 
 /** The derived figures are computed here so the client never recalculates money. */
 export function toAccountDto(row: AccountRow, includeInternal = true) {
   const asOf = today()
+  const expectedInterest = interestAtMaturity(
+    String(row.principal_amount),
+    String(row.interest_rate),
+    Number(row.term_months),
+  )
+
   return {
     id: row.id,
     customerId: row.customer_id,
+    bank: bankOf(row),
     accountNumber: row.account_number,
     productName: row.product_name,
     principalAmount: String(row.principal_amount),
@@ -56,25 +116,23 @@ export function toAccountDto(row: AccountRow, includeInternal = true) {
       row.start_date,
       asOf,
     ),
-    interestAtMaturity: interestAtMaturity(
-      String(row.principal_amount),
-      String(row.interest_rate),
-      Number(row.term_months),
-    ),
+    interestAtMaturity: expectedInterest,
+    expectedTotal: addAmounts([String(row.principal_amount), expectedInterest]),
   }
 }
 
 export async function listAccountsOfCustomer(customerId: number) {
   const rows = await query<AccountRow>(
-    `SELECT ${COLUMNS} FROM fixed_deposit_accounts
-      WHERE customer_id = ? AND deleted_at IS NULL ORDER BY start_date DESC, id DESC`,
+    `${SELECT_WITH_BANK}
+      WHERE a.customer_id = ? AND a.deleted_at IS NULL
+      ORDER BY a.start_date DESC, a.id DESC`,
     [customerId],
   )
   return rows
 }
 
 export async function findAccountById(id: number) {
-  return queryOne<AccountRow>(`SELECT ${COLUMNS} FROM fixed_deposit_accounts WHERE id = ? AND deleted_at IS NULL`, [id])
+  return queryOne<AccountRow>(`${SELECT_WITH_BANK} WHERE a.id = ? AND a.deleted_at IS NULL`, [id])
 }
 
 export async function requireAccountById(id: number) {
@@ -94,6 +152,7 @@ export async function nextAccountNumber() {
 
 export type AccountInput = {
   accountNumber: string
+  bankId: number
   productName: string
   principalAmount: string
   currency: string
@@ -112,11 +171,12 @@ export async function insertAccount(customerId: number, input: AccountInput) {
   try {
     const result = await execute(
       `INSERT INTO fixed_deposit_accounts
-         (customer_id, account_number, product_name, principal_amount, currency, interest_rate, term_months,
+         (customer_id, bank_id, account_number, product_name, principal_amount, currency, interest_rate, term_months,
           start_date, maturity_date, status, interest_payment_method, payout_date, reference_account, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         customerId,
+        input.bankId,
         input.accountNumber,
         input.productName,
         input.principalAmount,
@@ -144,6 +204,7 @@ export async function insertAccount(customerId: number, input: AccountInput) {
 }
 
 const UPDATABLE: Record<string, string> = {
+  bankId: "bank_id",
   productName: "product_name",
   principalAmount: "principal_amount",
   currency: "currency",
@@ -182,18 +243,21 @@ export async function listAllAccounts(filters: { status?: string; search?: strin
     values.push(filters.status)
   }
   if (filters.search) {
-    where.push("(a.account_number LIKE ? OR a.reference_account LIKE ? OR c.last_name LIKE ? OR c.customer_number LIKE ?)")
+    where.push(
+      "(a.account_number LIKE ? OR a.reference_account LIKE ? OR c.last_name LIKE ? OR c.customer_number LIKE ? OR b.name LIKE ?)",
+    )
     const like = `%${filters.search}%`
-    values.push(like, like, like, like)
+    values.push(like, like, like, like, like)
   }
 
   const limit = Math.min(Math.max(filters.limit ?? 200, 1), 500)
 
   return query<AccountRow & { first_name: string; last_name: string; customer_number: string }>(
-    `SELECT ${COLUMNS.split(",").map((column) => `a.${column.trim()}`).join(", ")},
+    `SELECT ${OWN_COLUMNS.split(",").map((column) => `a.${column.trim()}`).join(", ")}, ${BANK_COLUMNS},
             c.first_name, c.last_name, c.customer_number
        FROM fixed_deposit_accounts a
        JOIN customers c ON c.id = a.customer_id
+       LEFT JOIN banks b ON b.id = a.bank_id AND b.deleted_at IS NULL
       WHERE ${where.join(" AND ")}
       ORDER BY a.maturity_date ASC
       LIMIT ${limit}`,
@@ -221,8 +285,9 @@ export async function portfolioSummary() {
   )
 
   const accounts = await query<AccountRow>(
-    `SELECT ${COLUMNS} FROM fixed_deposit_accounts
-      WHERE deleted_at IS NULL AND status IN ('ACTIVE','PENDING','MATURED')`,
+    `${SELECT_WITH_BANK}
+      WHERE a.deleted_at IS NULL AND a.status IN (${LIVE_STATUSES.map(() => "?").join(",")})`,
+    [...LIVE_STATUSES],
   )
 
   const volume = accounts.length ? addAmounts(accounts.map((row) => String(row.principal_amount))) : "0.00"

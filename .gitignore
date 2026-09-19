@@ -9,3 +9,6 @@ next-env.d.ts
 .env.local
 .env.production
 .env.test
+
+# Dateiablage (Kundendokumente, Banklogos)
+/var/

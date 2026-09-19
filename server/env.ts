@@ -42,6 +42,13 @@ export const env = {
     /** Sessions expire this many minutes after the last request. */
     idleMinutes: number("SESSION_IDLE_MINUTES", 15),
   },
+  storage: {
+    /** Dateien liegen ausserhalb des Webroots – niemals unter public/. */
+    dir: process.env.STORAGE_DIR ?? "./var/storage",
+    /** Obergrenze je hochgeladener Datei. */
+    maxUploadMb: number("MAX_UPLOAD_MB", 10),
+    maxLogoMb: number("MAX_LOGO_MB", 2),
+  },
   security: {
     /** Failed logins per identifier before the account is locked. */
     maxLoginAttempts: number("MAX_LOGIN_ATTEMPTS", 5),

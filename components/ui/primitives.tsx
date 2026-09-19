@@ -138,9 +138,14 @@ const customerTone: Record<CustomerStatus, Tone> = {
 }
 
 const accountTone: Record<AccountStatus, Tone> = {
-  ACTIVE: "good",
+  DRAFT: "neutral",
+  KYC_PENDING: "warn",
+  DOCS_PENDING: "warn",
+  IN_PROGRESS: "info",
   PENDING: "info",
+  ACTIVE: "good",
   MATURED: "warn",
+  PAID_OUT: "good",
   CLOSED: "neutral",
   CANCELLED: "danger",
 }

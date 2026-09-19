@@ -72,16 +72,20 @@ export const passwordResetConfirmSchema = z.object({
 
 export const customerStatusSchema = z.enum(["ACTIVE", "INACTIVE", "PENDING", "BLOCKED"])
 export const kycStatusSchema = z.enum(["OPEN", "SUBMITTED", "VERIFIED", "REJECTED"])
-export const accountStatusSchema = z.enum(["PENDING", "ACTIVE", "MATURED", "CLOSED", "CANCELLED"])
-export const interestMethodSchema = z.enum(["AT_MATURITY", "ANNUAL", "QUARTERLY", "MONTHLY"])
-export const documentCategorySchema = z.enum([
-  "IDENTIFICATION",
-  "CONTRACTS",
-  "CONFIRMATIONS",
-  "STATEMENTS",
-  "CORRESPONDENCE",
-  "OTHER",
+export const accountStatusSchema = z.enum([
+  "DRAFT",
+  "KYC_PENDING",
+  "DOCS_PENDING",
+  "IN_PROGRESS",
+  "PENDING",
+  "ACTIVE",
+  "MATURED",
+  "PAID_OUT",
+  "CLOSED",
+  "CANCELLED",
 ])
+export const interestMethodSchema = z.enum(["AT_MATURITY", "ANNUAL", "QUARTERLY", "MONTHLY"])
+export const documentCategorySchema = z.enum(["IDENTITY", "KYC", "CONTRACTS", "BANK_DOCUMENTS", "OTHER"])
 
 export const customerCreateSchema = z.object({
   customerNumber: trimmed(32).optional(),
@@ -112,6 +116,7 @@ export const customerUpdateSchema = customerCreateSchema
 export const accountCreateSchema = z
   .object({
     accountNumber: trimmed(32).optional(),
+    bankId: z.coerce.number().int().positive("Bitte wählen Sie eine Bank aus."),
     productName: trimmed(120).min(1, "Bitte geben Sie einen Produktnamen ein."),
     principalAmount: amount,
     currency: z.enum(SUPPORTED_CURRENCIES).default("EUR"),
@@ -144,6 +149,7 @@ export const accountCreateSchema = z
   })
 
 export const accountUpdateSchema = z.object({
+  bankId: z.coerce.number().int().positive().optional(),
   productName: trimmed(120).min(1).optional(),
   principalAmount: amount.optional(),
   currency: z.enum(SUPPORTED_CURRENCIES).optional(),
@@ -160,12 +166,52 @@ export const accountUpdateSchema = z.object({
   recalculateMaturity: z.boolean().optional(),
 })
 
-export const documentCreateSchema = z.object({
-  filename: trimmed(255).min(1, "Bitte geben Sie einen Dateinamen an."),
+/** Angaben, die einen Datei-Upload begleiten (multipart/form-data). */
+export const documentUploadSchema = z.object({
+  title: trimmed(255).min(1, "Bitte geben Sie einen Dokumentnamen ein."),
   category: documentCategorySchema.default("OTHER"),
-  sizeKb: z.coerce.number().int().min(0).max(50_000).default(0),
+  docType: trimmed(60).optional().nullable(),
   accountId: z.coerce.number().int().positive().optional().nullable(),
 })
+
+export const documentListQuerySchema = z.object({
+  category: documentCategorySchema.optional(),
+  accountId: z.coerce.number().int().positive().optional(),
+  search: z.string().trim().max(120).optional(),
+})
+
+export const bankCreateSchema = z.object({
+  name: trimmed(160).min(2, "Bitte geben Sie den Namen der Bank ein."),
+  legalName: trimmed(190).optional().nullable(),
+  country: trimmed(80).min(1, "Bitte geben Sie das Land der Bank ein."),
+  city: trimmed(120).optional().nullable(),
+  address: trimmed(190).optional().nullable(),
+  postalCode: trimmed(20).optional().nullable(),
+  website: z
+    .string()
+    .trim()
+    .max(190)
+    .optional()
+    .nullable()
+    .refine((value) => !value || /^https?:\/\/[^\s]+\.[^\s]+$/i.test(value), {
+      message: "Bitte geben Sie eine gültige Adresse an, zum Beispiel https://www.bank.de.",
+    }),
+  bic: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .max(11)
+    .optional()
+    .nullable()
+    .refine((value) => !value || /^[A-Z0-9]{8}([A-Z0-9]{3})?$/.test(value), {
+      message: "Ein BIC besteht aus 8 oder 11 Zeichen.",
+    }),
+  notes: trimmed(2000).optional().nullable(),
+})
+
+export const bankUpdateSchema = bankCreateSchema
+  .partial()
+  .refine((data) => Object.keys(data).length > 0, { message: "Es wurden keine Änderungen übermittelt." })
 
 export const messageCreateSchema = z.object({
   subject: trimmed(190).min(1, "Bitte geben Sie einen Betreff ein."),

@@ -77,6 +77,30 @@ function createClient() {
     del(path) {
       return this.request("DELETE", path)
     },
+    /** Multipart-Upload ohne Content-Type-Kopfzeile – die setzt fetch selbst. */
+    async upload(path, form) {
+      const headers = { Accept: "application/json", Cookie: header(), Origin: BASE }
+      if (cookies.has("ptb_csrf")) headers["X-CSRF-Token"] = decodeURIComponent(cookies.get("ptb_csrf"))
+      const response = await fetch(`${BASE}${path}`, { method: "POST", headers, body: form, redirect: "manual" })
+      store(response)
+      const text = await response.text()
+      let json = {}
+      try {
+        json = text ? JSON.parse(text) : {}
+      } catch {
+        json = { raw: text.slice(0, 200) }
+      }
+      return { status: response.status, body: json }
+    },
+    /** Rohabruf für Dateien: liefert Status und Kopfzeilen statt JSON. */
+    async raw(path) {
+      const response = await fetch(`${BASE}${path}`, {
+        headers: { Cookie: header(), Origin: BASE },
+        redirect: "manual",
+      })
+      const buffer = Buffer.from(await response.arrayBuffer())
+      return { status: response.status, headers: response.headers, buffer }
+    },
   }
 }
 
@@ -154,11 +178,60 @@ let customerId = null
   check("Doppelte E-Mail wird abgewiesen", duplicate.status === 409, `status ${duplicate.status}`)
 }
 
+/* ---------------- Banken ---------------- */
+console.log("\nBanken")
+let bankId = null
+{
+  const invalid = await admin.post("/api/banks", { name: "X", country: "Deutschland" })
+  check("Zu kurzer Bankname wird abgewiesen", invalid.status === 400, `status ${invalid.status}`)
+
+  const badBic = await admin.post("/api/banks", { name: `Testbank ${stamp}`, country: "Deutschland", bic: "ABC" })
+  check("Ungültiger BIC wird abgewiesen", badBic.status === 400)
+
+  const created = await admin.post("/api/banks", {
+    name: `Testbank ${stamp}`,
+    country: "Deutschland",
+    city: "Berlin",
+    website: "https://www.example-test.test",
+    bic: "TESTDEB1",
+  })
+  check("Bank wird angelegt", created.status === 201, JSON.stringify(created.body).slice(0, 140))
+  bankId = created.body?.id ?? null
+
+  const duplicate = await admin.post("/api/banks", { name: `Testbank ${stamp}`, country: "Deutschland" })
+  check("Doppelter Bankname wird abgewiesen", duplicate.status === 409, `status ${duplicate.status}`)
+
+  const list = await admin.get("/api/banks")
+  check("Bankenliste enthält die neue Bank", (list.body?.banks ?? []).some((bank) => bank.id === bankId))
+}
+
 /* ---------------- Konten ---------------- */
 console.log("\nFestgeldkonten")
 let accountId = null
 {
+  const withoutBank = await admin.post(`/api/customers/${customerId}/accounts`, {
+    productName: "Festgeld",
+    principalAmount: "100000",
+    interestRate: "3.0",
+    termMonths: 12,
+    startDate: "2026-01-01",
+    referenceAccount: "DE02 1203 0000 0000 2020 51",
+  })
+  check("Konto ohne Bank wird abgewiesen", withoutBank.status === 400, `status ${withoutBank.status}`)
+
+  const unknownBank = await admin.post(`/api/customers/${customerId}/accounts`, {
+    bankId: 999999,
+    productName: "Festgeld",
+    principalAmount: "100000",
+    interestRate: "3.0",
+    termMonths: 12,
+    startDate: "2026-01-01",
+    referenceAccount: "DE02 1203 0000 0000 2020 51",
+  })
+  check("Unbekannte Bank wird abgewiesen", unknownBank.status === 404, `status ${unknownBank.status}`)
+
   const negative = await admin.post(`/api/customers/${customerId}/accounts`, {
+    bankId,
     productName: "Festgeld",
     principalAmount: "-1000",
     interestRate: "3.0",
@@ -169,6 +242,7 @@ let accountId = null
   check("Negativer Betrag wird abgewiesen", negative.status === 400, `status ${negative.status}`)
 
   const crazyRate = await admin.post(`/api/customers/${customerId}/accounts`, {
+    bankId,
     productName: "Festgeld",
     principalAmount: "100000",
     interestRate: "400",
@@ -183,6 +257,7 @@ let accountId = null
   )
 
   const badDates = await admin.post(`/api/customers/${customerId}/accounts`, {
+    bankId,
     productName: "Festgeld",
     principalAmount: "100000",
     interestRate: "3.25",
@@ -194,6 +269,7 @@ let accountId = null
   check("Fälligkeit vor Startdatum wird abgewiesen", badDates.status === 400)
 
   const account = await admin.post(`/api/customers/${customerId}/accounts`, {
+    bankId,
     productName: "Festgeld 12 Monate",
     principalAmount: "100.000,00",
     currency: "EUR",
@@ -209,6 +285,8 @@ let accountId = null
   check("Betrag wird als Dezimalwert gespeichert", account.body?.account?.principalAmount === "100000.00")
   check("Fälligkeit wird serverseitig berechnet", account.body?.account?.maturityDate === "2027-01-15")
   check("Zinsertrag wird serverseitig berechnet", account.body?.account?.interestAtMaturity === "4000.00")
+  check("Auszahlungsbetrag wird serverseitig berechnet", account.body?.account?.expectedTotal === "104000.00")
+  check("Die Bank hängt an der Anlage", account.body?.account?.bank?.id === bankId)
 
   const patched = await admin.patch(`/api/accounts/${accountId}`, { interestRate: "4,25" })
   check("Zinssatz kann geändert werden", patched.status === 200 && patched.body?.account?.interestRate === "4.2500")
@@ -281,6 +359,123 @@ console.log("\nKundenrolle und Objektzugriff")
 
   const dashboard = await customer.get("/api/dashboard")
   check("Admin-Dashboard ist für Kunden gesperrt", dashboard.status === 403)
+
+  const bankWrite = await customer.post("/api/banks", { name: `Kundenbank ${stamp}`, country: "Deutschland" })
+  check("Kunde kann keine Bank anlegen", bankWrite.status === 403, `status ${bankWrite.status}`)
+}
+
+/* ---------------- Dokumente ---------------- */
+console.log("\nDokumente")
+let staffDocumentId = null
+let customerDocumentId = null
+{
+  const pdf = () => new Blob([Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")], {
+    type: "application/pdf",
+  })
+
+  const form = new FormData()
+  form.set("file", pdf(), "vertrag.pdf")
+  form.set("title", "Festgeldvertrag Test")
+  form.set("category", "CONTRACTS")
+  form.set("docType", "DEPOSIT_CONTRACT")
+  form.set("accountId", String(accountId))
+  const uploaded = await admin.upload(`/api/customers/${customerId}/documents`, form)
+  check("Mitarbeiter kann ein Dokument hochladen", uploaded.status === 201, JSON.stringify(uploaded.body).slice(0, 140))
+  staffDocumentId = uploaded.body?.id ?? null
+
+  const wrongType = new FormData()
+  wrongType.set("file", new Blob([Buffer.from("<?php echo 1; ?>")], { type: "application/pdf" }), "schad.php")
+  wrongType.set("title", "Unerlaubt")
+  const rejectedType = await admin.upload(`/api/customers/${customerId}/documents`, wrongType)
+  check("Unerlaubter Dateityp wird abgewiesen", rejectedType.status === 400, `status ${rejectedType.status}`)
+  check(
+    "Meldung nennt den Grund verständlich",
+    String(rejectedType.body?.error?.message ?? "").includes("Dateityp"),
+    String(rejectedType.body?.error?.message ?? "").slice(0, 80),
+  )
+
+  const disguised = new FormData()
+  disguised.set("file", new Blob([Buffer.from("<?php echo 1; ?>")], { type: "application/pdf" }), "schad.pdf")
+  disguised.set("title", "Umbenannt")
+  const rejectedContent = await admin.upload(`/api/customers/${customerId}/documents`, disguised)
+  check("Umbenannte Datei wird am Inhalt erkannt", rejectedContent.status === 400, `status ${rejectedContent.status}`)
+
+  const tooBig = new FormData()
+  tooBig.set(
+    "file",
+    new Blob([Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(11 * 1024 * 1024, 0x20)])], {
+      type: "application/pdf",
+    }),
+    "gross.pdf",
+  )
+  tooBig.set("title", "Zu groß")
+  const rejectedSize = await admin.upload(`/api/customers/${customerId}/documents`, tooBig)
+  check("Zu große Datei wird abgewiesen", rejectedSize.status === 400, `status ${rejectedSize.status}`)
+
+  const file = await admin.raw(`/api/documents/${staffDocumentId}/file`)
+  check("Mitarbeiter kann die Datei abrufen", file.status === 200 && file.buffer.length > 0)
+  check("Auslieferung verbietet MIME-Raten", file.headers.get("x-content-type-options") === "nosniff")
+
+  const anonymousFile = await anonymous.raw(`/api/documents/${staffDocumentId}/file`)
+  check("Ohne Anmeldung ist die Datei gesperrt", anonymousFile.status === 401, `status ${anonymousFile.status}`)
+
+  const ownFile = await customer.raw(`/api/documents/${staffDocumentId}/file`)
+  check("Kunde kann sein eigenes Dokument abrufen", ownFile.status === 200)
+
+  const ownList = await customer.get("/api/me/documents")
+  check(
+    "Dokument erscheint in der eigenen Akte",
+    (ownList.body?.documents ?? []).some((entry) => entry.id === staffDocumentId),
+  )
+  check(
+    "Dokument ist der Anlage zugeordnet",
+    (ownList.body?.documents ?? []).find((entry) => entry.id === staffDocumentId)?.accountId === accountId,
+  )
+
+  const ownUpload = new FormData()
+  ownUpload.set("file", pdf(), "ausweis.pdf")
+  ownUpload.set("title", "Mein Ausweis")
+  ownUpload.set("category", "IDENTITY")
+  ownUpload.set("docType", "ID_CARD")
+  const customerUpload = await customer.upload("/api/me/documents", ownUpload)
+  check("Kunde kann selbst hochladen", customerUpload.status === 201, JSON.stringify(customerUpload.body).slice(0, 140))
+  customerDocumentId = customerUpload.body?.id ?? null
+
+  const foreignAccount = new FormData()
+  foreignAccount.set("file", pdf(), "fremd.pdf")
+  foreignAccount.set("title", "Fremde Anlage")
+  foreignAccount.set("accountId", "999999")
+  const rejectedAccount = await customer.upload("/api/me/documents", foreignAccount)
+  check("Fremde Anlage kann nicht zugeordnet werden", rejectedAccount.status === 400, `status ${rejectedAccount.status}`)
+
+  // Zweiter Kunde: sein Dokument darf der erste unter keinen Umständen sehen.
+  const otherCustomer = await admin.post("/api/customers", {
+    firstName: "Fremd",
+    lastName: "Kunde",
+    email: `fremd${stamp}@example.com`,
+    city: "Hamburg",
+    country: "Deutschland",
+  })
+  const otherForm = new FormData()
+  otherForm.set("file", pdf(), "fremdvertrag.pdf")
+  otherForm.set("title", "Fremdes Dokument")
+  const otherUpload = await admin.upload(`/api/customers/${otherCustomer.body?.customer?.id}/documents`, otherForm)
+  check("Dokument für zweiten Kunden angelegt", otherUpload.status === 201)
+
+  const foreignFile = await customer.raw(`/api/documents/${otherUpload.body?.id}/file`)
+  check("Fremdes Dokument ist gesperrt", foreignFile.status === 403, `status ${foreignFile.status}`)
+
+  const foreignDelete = await customer.del(`/api/documents/${otherUpload.body?.id}`)
+  check("Fremdes Dokument kann nicht gelöscht werden", foreignDelete.status === 403)
+
+  const deleteStaffDocument = await customer.del(`/api/documents/${staffDocumentId}`)
+  check("Kunde kann fremd hinterlegte Unterlagen nicht löschen", deleteStaffDocument.status === 403)
+
+  const deleteOwn = await customer.del(`/api/documents/${customerDocumentId}`)
+  check("Kunde kann eigene Uploads löschen", deleteOwn.status === 200, `status ${deleteOwn.status}`)
+
+  const goneFile = await customer.raw(`/api/documents/${customerDocumentId}/file`)
+  check("Gelöschtes Dokument ist nicht mehr abrufbar", goneFile.status === 404, `status ${goneFile.status}`)
 }
 
 /* ---------------- Passwortwechsel ---------------- */

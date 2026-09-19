@@ -6,9 +6,14 @@ Backend (REST-API, MySQL, Sessions, Rollen, Audit-Log).
 Zwei Bereiche, eine Anmeldung unter `/login`:
 
 - **Verwaltung** (`/admin`) – für Pick The Bank: Kunden, Festgeldkonten,
-  Dokumente, Nachrichten, Auszahlungen, Aktivitätsprotokoll
-- **Kundenansicht** (`/portal`) – der Kunde sieht ausschließlich seine eigenen
-  Anlagen, Dokumente und Nachrichten und kann nur sein Passwort ändern
+  Banken, Dokumente, Nachrichten, Auszahlungen, Aktivitätsprotokoll
+- **Kundenansicht** (`/portal`) – die digitale Kundenakte: Übersicht, alle
+  Festgeldanlagen samt Bank und Anlage-Detailseite, Dokumente nach Kategorien
+  mit eigenem Upload, Stammdaten und Nachrichten. Ändern kann der Kunde nur
+  sein Passwort und seine selbst hochgeladenen Dokumente.
+
+Ein Kunde kann beliebig viele Festgeldanlagen bei unterschiedlichen Banken
+haben; Banken werden einmal zentral gepflegt und von den Anlagen referenziert.
 
 ## Stack
 
@@ -29,6 +34,9 @@ pnpm migrate             # Tabellen anlegen
 pnpm seed:admin          # ersten Administrator anlegen
 pnpm dev                 # http://localhost:3000
 ```
+
+Hochgeladene Dateien liegen unter `STORAGE_DIR` (Vorgabe `./var/storage`) –
+außerhalb von `public/` und damit nicht über eine URL erreichbar.
 
 Optionale Beispieldaten für eine Testumgebung (niemals in Produktion):
 
@@ -63,8 +71,16 @@ Passwortwechsel, CSRF, Brute-Force-Schutz und Fehlerfälle.
 | GET/POST | `/api/customers/:id/accounts` | GET auch eigener Kunde |
 | GET/PATCH/PUT | `/api/accounts/:id` | GET auch eigener Kunde |
 | GET | `/api/accounts` | Mitarbeiter |
-| GET/POST | `/api/customers/:id/documents`, `/messages` | GET auch eigener Kunde |
-| DELETE | `/api/documents/:id` | Mitarbeiter |
+| GET/POST | `/api/customers/:id/documents` (Upload: multipart) | GET auch eigener Kunde |
+| GET/POST | `/api/customers/:id/messages` | GET auch eigener Kunde |
+| GET | `/api/documents` | Mitarbeiter |
+| GET | `/api/documents/:id/file` | Mitarbeiter, Kunde nur eigene Dokumente |
+| DELETE | `/api/documents/:id` | Mitarbeiter; Kunde nur eigene Uploads |
+| GET/POST | `/api/banks` | GET angemeldet, POST Mitarbeiter |
+| GET/PATCH | `/api/banks/:id` | GET angemeldet, PATCH Mitarbeiter |
+| DELETE | `/api/banks/:id` | Administrator |
+| GET/POST/DELETE | `/api/banks/:id/logo` | GET angemeldet, Rest Mitarbeiter |
+| GET/POST | `/api/me/documents` | Kunde (eigene Akte) |
 | POST/GET | `/api/customers/:id/login` | Mitarbeiter (Zugänge vergeben) |
 | GET | `/api/audit-log`, `/api/dashboard` | Mitarbeiter |
 | GET | `/api/me` | Kunde (eigene Daten) |
@@ -72,14 +88,19 @@ Passwortwechsel, CSRF, Brute-Force-Schutz und Fehlerfälle.
 ## Datenmodell
 
 ```
-customers ──< fixed_deposit_accounts
-    │                 │
-    ├──< documents ───┘
-    ├──< messages
-    ├──< auth_users (ein Login je Kunde)
-    └──< audit_logs
+banks ──< fixed_deposit_accounts >── customers
+                  │                      │
+                  └──< documents >───────┤  (Dokument: Kunde Pflicht, Anlage optional)
+                                         ├──< messages
+                                         ├──< auth_users (ein Login je Kunde)
+                                         └──< audit_logs
 auth_users ──< sessions, password_resets
 ```
+
+Dokumentenkategorien: `IDENTITY`, `KYC`, `CONTRACTS`, `BANK_DOCUMENTS`,
+`OTHER`, je mit fester Unterart (z. B. Personalausweis, Adressnachweis,
+Festgeldvertrag). Anlagestatus: Entwurf, KYC ausstehend, Unterlagen ausstehend,
+In Bearbeitung, Vorgemerkt, Aktiv, Fällig, Ausgezahlt, Geschlossen, Storniert.
 
 Beträge liegen als `DECIMAL(18,2)`, Zinssätze als `DECIMAL(6,4)` in der
 Datenbank; gerechnet wird serverseitig in Cent (`server/money.ts`).
@@ -97,6 +118,12 @@ Datenbank; gerechnet wird serverseitig in Cent (`server/money.ts`).
   parametrisiert; Fehlermeldungen enthalten keine internen Details
 - Jede Änderung landet mit Benutzer, Rolle, Zeitpunkt, IP, altem und neuem Wert
   im `audit_logs`; Kunden haben darauf keinen Zugriff
+- Dateien liegen außerhalb des Webroots unter `STORAGE_DIR`; der Speichername
+  wird zufällig erzeugt, nie aus dem Dateinamen abgeleitet. Ausgeliefert wird
+  ausschließlich über `/api/documents/:id/file` nach Sitzungs- und
+  Eigentümerprüfung, mit `nosniff` und ohne Zwischenspeicherung
+- Uploads: Endung, gemeldeter Typ **und** Dateiinhalt (Magic Bytes) müssen
+  zusammenpassen; Obergrenze `MAX_UPLOAD_MB` (Vorgabe 10 MB)
 
 Secrets stehen ausschließlich in Environment Variables (`.env.example` als
 Vorlage), niemals im Repository.

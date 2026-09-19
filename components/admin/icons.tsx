@@ -102,6 +102,11 @@ const paths: Record<string, React.ReactNode> = {
     </>
   ),
   check: <path d="m5 13 4 4 10-10" />,
+  bank: (
+    <>
+      <path d="M3 10h18M5 10v9m4-9v9m6-9v9m4-9v9M3 19h18M12 3 3 8h18l-9-5Z" />
+    </>
+  ),
 }
 
 export function Icon({ name, className = "h-[18px] w-[18px]" }: { name: keyof typeof paths | string; className?: string }) {

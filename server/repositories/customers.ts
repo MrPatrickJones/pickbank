@@ -269,8 +269,8 @@ export async function listCustomers(params: CustomerListQuery) {
     SELECT ${COLUMNS.split(",").map((column) => `c.${column.trim()}`).join(", ")},
            COUNT(a.id) AS account_count,
            SUM(CASE WHEN a.status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_accounts,
-           SUM(CASE WHEN a.status IN ('ACTIVE','PENDING','MATURED') THEN a.principal_amount ELSE 0 END) AS total_principal,
-           MIN(CASE WHEN a.status IN ('ACTIVE','PENDING') AND a.maturity_date >= CURDATE() THEN a.maturity_date END) AS next_maturity
+           SUM(CASE WHEN a.status IN ('ACTIVE','PENDING','IN_PROGRESS','MATURED') THEN a.principal_amount ELSE 0 END) AS total_principal,
+           MIN(CASE WHEN a.status IN ('ACTIVE','PENDING','IN_PROGRESS') AND a.maturity_date >= CURDATE() THEN a.maturity_date END) AS next_maturity
       FROM customers c
       LEFT JOIN fixed_deposit_accounts a ON a.customer_id = c.id AND a.deleted_at IS NULL
      WHERE ${where.join(" AND ")}
@@ -284,8 +284,8 @@ export async function listCustomers(params: CustomerListQuery) {
   const countSql = `
     SELECT COUNT(*) AS total FROM (
       SELECT c.id,
-             SUM(CASE WHEN a.status IN ('ACTIVE','PENDING','MATURED') THEN a.principal_amount ELSE 0 END) AS total_principal,
-             MIN(CASE WHEN a.status IN ('ACTIVE','PENDING') AND a.maturity_date >= CURDATE() THEN a.maturity_date END) AS next_maturity
+             SUM(CASE WHEN a.status IN ('ACTIVE','PENDING','IN_PROGRESS','MATURED') THEN a.principal_amount ELSE 0 END) AS total_principal,
+             MIN(CASE WHEN a.status IN ('ACTIVE','PENDING','IN_PROGRESS') AND a.maturity_date >= CURDATE() THEN a.maturity_date END) AS next_maturity
         FROM customers c
         LEFT JOIN fixed_deposit_accounts a ON a.customer_id = c.id AND a.deleted_at IS NULL
        WHERE ${where.join(" AND ")}
@@ -322,7 +322,7 @@ export async function customerTotals(customerId: number) {
   }>(
     `SELECT principal_amount, interest_rate, term_months, start_date, maturity_date, status
        FROM fixed_deposit_accounts
-      WHERE customer_id = ? AND deleted_at IS NULL AND status IN ('ACTIVE','PENDING','MATURED')`,
+      WHERE customer_id = ? AND deleted_at IS NULL AND status IN ('ACTIVE','PENDING','IN_PROGRESS','MATURED')`,
     [customerId],
   )
 

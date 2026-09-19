@@ -17,6 +17,7 @@ export type Permission =
   | "customers.write"
   | "customers.delete"
   | "accounts.write"
+  | "banks.write"
   | "documents.write"
   | "messages.send"
   | "logins.manage"
@@ -29,6 +30,7 @@ const rolePermissions: Record<Role, Permission[]> = {
     "customers.write",
     "customers.delete",
     "accounts.write",
+    "banks.write",
     "documents.write",
     "messages.send",
     "logins.manage",
@@ -39,6 +41,7 @@ const rolePermissions: Record<Role, Permission[]> = {
     "customers.read",
     "customers.write",
     "accounts.write",
+    "banks.write",
     "documents.write",
     "messages.send",
     "logins.manage",

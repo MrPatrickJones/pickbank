@@ -7,6 +7,7 @@ import {
   requireAccountById,
   toAccountDto,
 } from "@/server/repositories/accounts"
+import { requireBankById } from "@/server/repositories/banks"
 import { requireCustomerById } from "@/server/repositories/customers"
 import { assertCustomerAccess, requireSession, requireStaff } from "@/server/session"
 import { accountCreateSchema } from "@/server/validation"
@@ -35,13 +36,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     await requireCustomerById(customerId)
 
     const body = accountCreateSchema.parse(await readJson(request))
+    const bank = await requireBankById(body.bankId)
     const accountNumber = body.accountNumber?.trim() || (await nextAccountNumber())
     const id = await insertAccount(customerId, { ...body, accountNumber })
     const account = await requireAccountById(id)
 
     await writeAudit(actorOf(session.user), clientIp(request), {
       action: "Konto angelegt",
-      description: `Festgeldkonto ${accountNumber} über ${body.principalAmount} ${body.currency} angelegt.`,
+      description: `Festgeldkonto ${accountNumber} bei ${bank.name} über ${body.principalAmount} ${body.currency} angelegt.`,
       customerId,
       accountId: id,
       newValue: `${body.principalAmount} ${body.currency}`,

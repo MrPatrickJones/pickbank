@@ -19,6 +19,7 @@ import {
   cellStrong,
   rowClass,
 } from "@/components/ui/primitives"
+import { BankLogo } from "@/components/admin/banks-view"
 import { Field, Select } from "@/components/ui/form"
 import { api, buildQuery } from "@/lib/api"
 import { daysUntil, formatAmount, formatDate, formatDateTime, formatFileSize, formatPercent } from "@/lib/format"
@@ -80,9 +81,10 @@ export function AccountsView({
 
         {accounts.length > 0 && (
           <Table
-            minWidth={1040}
+            minWidth={1160}
             headers={[
               "Konto",
+              "Bank",
               "Kunde",
               { label: "Betrag", align: "right" },
               { label: "Zinssatz", align: "right" },
@@ -96,6 +98,16 @@ export function AccountsView({
             {accounts.map((account) => (
               <tr key={account.id} className={`${rowClass} cursor-pointer`} onClick={() => onOpenCustomer(account.customer.id)}>
                 <td className={`${cellStrong} num`}>{account.accountNumber}</td>
+                <td className={cell}>
+                  {account.bank ? (
+                    <span className="flex items-center gap-2">
+                      <BankLogo bank={account.bank} size={22} />
+                      <span className="truncate">{account.bank.name}</span>
+                    </span>
+                  ) : (
+                    <span className="text-[var(--faint)]">–</span>
+                  )}
+                </td>
                 <td className={cell}>
                   {account.customer.firstName} {account.customer.lastName}
                   <div className="num text-[12px] text-[var(--faint)]">{account.customer.customerNumber}</div>
@@ -156,21 +168,53 @@ export function DocumentsView({ onOpenCustomer }: { onOpenCustomer: (id: number)
 
         {documents.length > 0 && (
           <Table
-            minWidth={820}
-            headers={["Dateiname", "Kunde", "Kategorie", "Hochgeladen", "Hochgeladen von", { label: "Größe", align: "right" }]}
+            minWidth={1000}
+            headers={[
+              "Dokument",
+              "Kunde",
+              "Kategorie",
+              "Anlage",
+              "Hochgeladen",
+              { label: "Größe", align: "right" },
+              { label: "", align: "right" },
+            ]}
           >
             {documents.map((document) => (
               <tr key={document.id} className={rowClass}>
-                <td className={cellStrong}>{document.filename}</td>
+                <td className={cellStrong}>
+                  {document.title}
+                  <span className="block text-[12px] font-normal text-[var(--faint)]">{document.filename}</span>
+                </td>
                 <td className={cell}>
                   <button type="button" className="hover:text-[var(--accent)]" onClick={() => onOpenCustomer(document.customerId)}>
                     {document.customer ? `${document.customer.firstName} ${document.customer.lastName}` : "–"}
                   </button>
                 </td>
                 <td className={cell}>{documentCategoryLabels[document.category]}</td>
+                <td className={cell}>
+                  {document.account ? (
+                    <span className="num">
+                      {document.account.bankName ? `${document.account.bankName} · ` : ""}
+                      {document.account.accountNumber}
+                    </span>
+                  ) : (
+                    <span className="text-[var(--faint)]">–</span>
+                  )}
+                </td>
                 <td className={`${cell} num`}>{formatDate(document.uploadedAt.slice(0, 10))}</td>
-                <td className={cell}>{document.uploadedBy ?? "–"}</td>
-                <td className={cellRight}>{formatFileSize(document.sizeKb)}</td>
+                <td className={cellRight}>{formatFileSize(document.sizeBytes)}</td>
+                <td className={`${cell} whitespace-nowrap text-right`}>
+                  {document.downloadUrl && (
+                    <a
+                      href={document.downloadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[13px] font-semibold text-[var(--accent)] hover:underline"
+                    >
+                      Anzeigen
+                    </a>
+                  )}
+                </td>
               </tr>
             ))}
           </Table>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 
 import { AccessCard } from "@/components/admin/access-card"
 import { AccountForm } from "@/components/admin/account-form"
+import { BankLogo } from "@/components/admin/banks-view"
 import { Icon } from "@/components/admin/icons"
 import {
   AccountStatusBadge,
@@ -24,10 +25,17 @@ import {
   rowClass,
 } from "@/components/ui/primitives"
 import { Field, Select, TextInput, Textarea } from "@/components/ui/form"
-import { ConfirmDialog, FileDrop, Modal, useToast } from "@/components/ui/overlays"
+import { ConfirmDialog, Modal, useToast } from "@/components/ui/overlays"
+import { DocumentUploadModal } from "@/components/portal/document-upload"
 import { ApiRequestError, api } from "@/lib/api"
-import { formatAmount, formatDate, formatDateTime, formatFileSize, formatPercent, initialsOf } from "@/lib/format"
-import { customerStatusOptions, documentCategoryLabels, documentCategoryOptions, kycLabels, kycStatusOptions } from "@/lib/labels"
+import { fileTypeOf, formatAmount, formatDate, formatDateTime, formatFileSize, formatPercent, initialsOf } from "@/lib/format"
+import {
+  customerStatusOptions,
+  documentCategoryLabels,
+  documentTypeLabel,
+  kycLabels,
+  kycStatusOptions,
+} from "@/lib/labels"
 import { useSession } from "@/lib/session"
 import { useResource } from "@/lib/use-resource"
 import type { Account, Customer, CustomerFile, DocumentCategory } from "@/lib/types"
@@ -181,9 +189,10 @@ export function CustomerDetail({ customerId, onBack }: { customerId: number; onB
             <EmptyState title="Keine Konten erfasst" hint="Legen Sie das erste Festgeldkonto an." />
           ) : (
             <Table
-              minWidth={1020}
+              minWidth={1160}
               headers={[
                 "Konto",
+                "Bank",
                 "Produkt",
                 { label: "Betrag", align: "right" },
                 { label: "Zinssatz", align: "right" },
@@ -198,6 +207,16 @@ export function CustomerDetail({ customerId, onBack }: { customerId: number; onB
               {accounts.map((account) => (
                 <tr key={account.id} className={rowClass}>
                   <td className={`${cellStrong} num`}>{account.accountNumber}</td>
+                  <td className={cell}>
+                    {account.bank ? (
+                      <span className="flex items-center gap-2">
+                        <BankLogo bank={account.bank} size={22} />
+                        <span className="truncate">{account.bank.name}</span>
+                      </span>
+                    ) : (
+                      <span className="text-[var(--faint)]">–</span>
+                    )}
+                  </td>
                   <td className={cell}>{account.productName}</td>
                   <td className={cellRight}>{formatAmount(account.principalAmount, account.currency, 0)}</td>
                   <td className={cellRight}>{formatPercent(account.interestRate)}</td>
@@ -232,19 +251,60 @@ export function CustomerDetail({ customerId, onBack }: { customerId: number; onB
             <EmptyState title="Keine Dokumente" hint="Laden Sie Ausweis, Vertrag oder Anlagebestätigung hoch." />
           ) : (
             <Table
-              minWidth={760}
-              headers={["Dateiname", "Kategorie", "Hochgeladen", "Hochgeladen von", { label: "Größe", align: "right" }, { label: "", align: "right" }]}
+              minWidth={900}
+              headers={[
+                "Dokument",
+                "Kategorie",
+                "Anlage",
+                "Hochgeladen",
+                { label: "Größe", align: "right" },
+                { label: "", align: "right" },
+              ]}
             >
               {documents.map((document) => (
                 <tr key={document.id} className={rowClass}>
-                  <td className={cellStrong}>{document.filename}</td>
-                  <td className={cell}>{documentCategoryLabels[document.category]}</td>
+                  <td className={cellStrong}>
+                    {document.title}
+                    <span className="block text-[12px] font-normal text-[var(--faint)]">
+                      {fileTypeOf(document.filename)} · {document.uploadedBy ?? "–"}
+                    </span>
+                  </td>
+                  <td className={cell}>
+                    {documentCategoryLabels[document.category]}
+                    {document.docType && (
+                      <span className="block text-[12px] text-[var(--faint)]">{documentTypeLabel(document.docType)}</span>
+                    )}
+                  </td>
+                  <td className={cell}>
+                    {document.account ? (
+                      <span className="num">{document.account.accountNumber}</span>
+                    ) : (
+                      <span className="text-[var(--faint)]">–</span>
+                    )}
+                  </td>
                   <td className={`${cell} num`}>{formatDate(document.uploadedAt.slice(0, 10))}</td>
-                  <td className={cell}>{document.uploadedBy ?? "–"}</td>
-                  <td className={cellRight}>{formatFileSize(document.sizeKb)}</td>
-                  <td className={`${cell} text-right`}>
+                  <td className={cellRight}>{formatFileSize(document.sizeBytes)}</td>
+                  <td className={`${cell} whitespace-nowrap text-right`}>
+                    {document.downloadUrl && (
+                      <>
+                        <a
+                          href={document.downloadUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[13px] font-semibold text-[var(--accent)] hover:underline"
+                        >
+                          Anzeigen
+                        </a>
+                        <a
+                          href={`${document.downloadUrl}?download=1`}
+                          className="ml-3 text-[13px] font-semibold text-[var(--accent)] hover:underline"
+                        >
+                          Herunterladen
+                        </a>
+                      </>
+                    )}
                     {writable && (
-                      <Button size="sm" variant="ghost" onClick={() => setRemoveTarget(document.id)}>
+                      <Button size="sm" variant="ghost" className="ml-2" onClick={() => setRemoveTarget(document.id)}>
                         Löschen
                       </Button>
                     )}
@@ -341,9 +401,10 @@ export function CustomerDetail({ customerId, onBack }: { customerId: number; onB
         onSaved={reload}
       />
 
-      <UploadModal
+      <DocumentUploadModal
         open={uploadOpen}
-        customerId={customer.id}
+        endpoint={`/api/customers/${customer.id}/documents`}
+        accounts={accounts}
         onClose={() => setUploadOpen(false)}
         onUploaded={async () => {
           toast("Dokument wurde hinterlegt.")
@@ -627,89 +688,6 @@ function EditStatusModal({
         }}
       />
     </>
-  )
-}
-
-function UploadModal({
-  open,
-  customerId,
-  onClose,
-  onUploaded,
-}: {
-  open: boolean
-  customerId: number
-  onClose: () => void
-  onUploaded: () => Promise<void>
-}) {
-  const [file, setFile] = useState<{ filename: string; sizeKb: number } | null>(null)
-  const [category, setCategory] = useState<DocumentCategory>("CONTRACTS")
-  const [error, setError] = useState("")
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (open) {
-      setFile(null)
-      setCategory("CONTRACTS")
-      setError("")
-    }
-  }, [open])
-
-  const upload = async () => {
-    if (!file) {
-      setError("Bitte wählen Sie eine Datei aus.")
-      return
-    }
-    setBusy(true)
-    try {
-      await api.post(`/api/customers/${customerId}/documents`, {
-        filename: file.filename,
-        sizeKb: file.sizeKb,
-        category,
-      })
-      await onUploaded()
-      onClose()
-    } catch (caught) {
-      setError(caught instanceof ApiRequestError ? caught.message : "Upload fehlgeschlagen.")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Modal
-      open={open}
-      title="Dokument hinterlegen"
-      subtitle="Der Prototyp speichert Name, Kategorie und Größe; die Ablage der Datei erfolgt über den Dokumentenspeicher."
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>Abbrechen</Button>
-          <Button variant="primary" disabled={busy} onClick={() => void upload()}>
-            Hinterlegen
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <FileDrop onFiles={(files) => { setFile(files[0] ?? null); setError("") }} />
-        {file && (
-          <p className="rounded-lg border border-[var(--line)] bg-white px-4 py-2.5 text-[13px] text-[var(--body)]">
-            Ausgewählt: <strong className="text-[var(--ink)]">{file.filename}</strong>{" "}
-            <span className="num text-[var(--faint)]">({formatFileSize(file.sizeKb)})</span>
-          </p>
-        )}
-        {error && <p className="text-[13px] font-medium text-[var(--danger)]">{error}</p>}
-        <Field label="Kategorie">
-          <Select value={category} onChange={(event) => setCategory(event.target.value as DocumentCategory)}>
-            {documentCategoryOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </div>
-    </Modal>
   )
 }
 

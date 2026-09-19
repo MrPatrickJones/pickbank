@@ -50,8 +50,35 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return payload as T
 }
 
+/** Multipart-Upload: der Browser setzt die Content-Type-Grenze selbst. */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "X-CSRF-Token": csrfToken() },
+    credentials: "same-origin",
+    cache: "no-store",
+    body: form,
+  })
+
+  const text = await response.text()
+  const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+
+  if (!response.ok) {
+    const error = (payload.error ?? {}) as { code?: string; message?: string; details?: Record<string, string> }
+    throw new ApiRequestError(
+      response.status,
+      error.code ?? "ERROR",
+      error.message ?? "Die Datei konnte nicht hochgeladen werden.",
+      error.details ?? {},
+    )
+  }
+
+  return payload as T
+}
+
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
+  upload,
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   delete: <T>(path: string) => request<T>("DELETE", path),

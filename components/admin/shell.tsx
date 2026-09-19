@@ -8,6 +8,7 @@ import { Icon } from "@/components/admin/icons"
 import { DashboardView } from "@/components/admin/dashboard-view"
 import { CustomersView } from "@/components/admin/customers-view"
 import { CustomerDetail } from "@/components/admin/customer-detail"
+import { BanksView } from "@/components/admin/banks-view"
 import { AccountsView, ActivitiesView, DocumentsView, MessagesView, PayoutsView } from "@/components/admin/list-views"
 import { SettingsView } from "@/components/admin/settings-view"
 import { NewCustomerWizard } from "@/components/admin/new-customer-wizard"
@@ -22,6 +23,7 @@ type ViewId =
   | "customers"
   | "customer"
   | "accounts"
+  | "banks"
   | "deposits"
   | "documents"
   | "payouts"
@@ -33,6 +35,7 @@ const navItems: { id: ViewId; label: string; icon: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "customers", label: "Kunden", icon: "customers" },
   { id: "accounts", label: "Festgeldkonten", icon: "deposits" },
+  { id: "banks", label: "Banken", icon: "bank" },
   { id: "payouts", label: "Auszahlungen", icon: "payouts" },
   { id: "documents", label: "Dokumente", icon: "documents" },
   { id: "messages", label: "Nachrichten", icon: "messages" },
@@ -309,6 +312,7 @@ export function AdminShell() {
           {view === "customers" && <CustomersView onOpenCustomer={openCustomer} onNewCustomer={() => setWizardOpen(true)} />}
           {view === "customer" && customerId && <CustomerDetail customerId={customerId} onBack={() => setView("customers")} />}
           {view === "accounts" && <AccountsView onOpenCustomer={openCustomer} />}
+          {view === "banks" && <BanksView />}
           {view === "documents" && <DocumentsView onOpenCustomer={openCustomer} />}
           {view === "payouts" && <PayoutsView onOpenCustomer={openCustomer} />}
           {view === "activities" && <ActivitiesView onOpenCustomer={openCustomer} />}
