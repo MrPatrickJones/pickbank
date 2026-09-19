@@ -1,0 +1,22 @@
+---
+# cPanel Git™ Version Control
+#
+# Nur nötig, wenn das Repository NICHT direkt in den Application root geklont
+# wird (siehe HANDOVER.md, Abschnitt 5). Vor dem ersten Deployment
+# <cpaneluser> durch den echten cPanel-Benutzernamen ersetzen.
+#
+# Bewusst ohne --delete: node_modules, .next und die Dateiablage dürfen beim
+# Kopieren nicht entfernt werden.
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/<cpaneluser>/portal.pickbank.de
+    - /bin/mkdir -p $DEPLOYPATH
+    - >-
+      /usr/bin/rsync -a
+      --exclude '.git'
+      --exclude 'node_modules'
+      --exclude '.next'
+      --exclude 'var'
+      --exclude '.env'
+      ./ $DEPLOYPATH/
+    - /bin/echo "Kopiert. Jetzt im Application root ausfuehren: ./scripts/deploy.sh"
