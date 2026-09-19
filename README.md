@@ -130,4 +130,7 @@ Vorlage), niemals im Repository.
 
 ## Deployment
 
-Siehe **DEPLOYMENT.md** (Namecheap cPanel, portal.pickbank.de).
+- **HANDOVER.md** – Übergabe an Dienstleister: Zugänge, Verknüpfung mit
+  GitHub, Reihenfolge der Arbeiten, Abnahmecheckliste
+- **DEPLOYMENT.md** – Schritt für Schritt durch Namecheap cPanel
+  (portal.pickbank.de)

@@ -31,9 +31,20 @@ Auf cPanel läuft sie über **Setup Node.js App** (Passenger).
 2. cPanel → **SSL/TLS Status**: Zertifikat (AutoSSL / Let's Encrypt) ausstellen
 3. cPanel → **Domains → Force HTTPS Redirect** aktivieren
 
-## 4. Dateien hochladen
+## 4. Quellcode auf den Server bringen
 
-Hochgeladen wird der Quellcode (nicht `node_modules`, nicht `.next`):
+**Empfohlen: direkt aus GitHub klonen.** Dann genügt für jedes spätere Update
+ein `git pull`. Die Einrichtung des Deploy Keys steht in **HANDOVER.md,
+Abschnitt 5**; in Kürze:
+
+```bash
+ssh-keygen -t ed25519 -C "cpanel-portal-pickbank" -f ~/.ssh/pickbank_deploy -N ""
+cat ~/.ssh/pickbank_deploy.pub          # → GitHub → Settings → Deploy keys
+git clone git@github.com:MrPatrickJones/pickbank.git portal.pickbank.de
+```
+
+Alternativ kann der Quellcode manuell hochgeladen werden
+(nicht `node_modules`, nicht `.next`):
 
 ```
 app/  components/  lib/  server/  migrations/  scripts/  public/
@@ -92,6 +103,9 @@ In cPanel unter **Setup Node.js App → Environment variables** eintragen
 | `LOCKOUT_MINUTES` | `15` | Dauer der Sperre |
 | `LOGIN_RATE_LIMIT` | `20` | Fehlversuche je IP im Zeitfenster |
 | `ALLOWED_ORIGINS` | `https://portal.pickbank.de` | erlaubte Herkunft schreibender Anfragen |
+| `STORAGE_DIR` | `/home/cpaneluser/ptb-storage` | Ablage für Dokumente und Banklogos – **außerhalb** des Dokumentstamms |
+| `MAX_UPLOAD_MB` | `10` | Obergrenze je hochgeladenem Dokument |
+| `MAX_LOGO_MB` | `2` | Obergrenze je Banklogo |
 | `ADMIN_EMAIL` | `admin@pickbank.de` | erster Administrator (nur für die Ersteinrichtung) |
 | `ADMIN_NAME` | `Pick The Bank` | Anzeigename |
 | `ADMIN_PASSWORD` | – | optional; ohne Wert erzeugt das Skript eines und zeigt es einmalig an |
@@ -114,16 +128,28 @@ Anschließend in cPanel **Restart** der Anwendung.
 ## 8. Nach jedem Update
 
 ```bash
+cd /home/cpaneluser/portal.pickbank.de
+./scripts/deploy.sh          # Pull, Installation, Migration, Build
+# cPanel → Setup Node.js App → Restart
+```
+
+Einzeln entspricht das:
+
+```bash
+git pull --ff-only
 pnpm install --frozen-lockfile
 pnpm migrate      # neue Migrationen anwenden
 pnpm build
-# cPanel → Setup Node.js App → Restart
 ```
 
 Migrationen sind additiv und werden in `schema_migrations` protokolliert; ein
 zweiter Lauf ist folgenlos.
 
 ## 9. Backups
+
+Gesichert werden müssen **zwei** Dinge: die Datenbank **und** das Verzeichnis
+aus `STORAGE_DIR`. Die hochgeladenen Dateien liegen nicht in der Datenbank –
+ein reiner SQL-Dump allein reicht nicht.
 
 - cPanel → **Backup Wizard**: täglicher Vollbackup der Datenbank aktivieren
 - Zusätzlich empfohlen: nächtlicher Dump per Cronjob
@@ -133,6 +159,11 @@ mysqldump --single-transaction --routines \
   -u cpaneluser_portal -p'PASSWORT' cpaneluser_pickbank \
   | gzip > /home/cpaneluser/backups/pickbank-$(date +\%F).sql.gz
 find /home/cpaneluser/backups -name 'pickbank-*.sql.gz' -mtime +30 -delete
+
+# Dateiablage mitsichern
+tar -czf /home/cpaneluser/backups/ptb-storage-$(date +\%F).tar.gz \
+  -C /home/cpaneluser ptb-storage
+find /home/cpaneluser/backups -name 'ptb-storage-*.tar.gz' -mtime +30 -delete
 ```
 
 Aufbewahrung 30 Tage, Wiederherstellung:
